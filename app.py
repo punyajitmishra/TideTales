@@ -4,11 +4,11 @@ import time
 import requests
 
 # 1. SETUP
-st.set_page_config(page_title="Eco-Teller", layout="wide")
+st.set_page_config(page_title="TideTales", layout="wide")
 
 # 2. SIDEBAR
 with st.sidebar:
-    st.title("🌿 Eco-Teller Settings")
+    st.title("🌿 TideTales Settings")
     api_key = st.text_input("Anthropic API Key", type="password")
     
     try:
@@ -25,7 +25,7 @@ with st.sidebar:
     use_sample = st.checkbox("Use Sample Climate Data", value=True)
 
 # 3. MAIN UI
-st.title("🌿 Eco-Teller")
+st.title("🌿Tide Tales")
 st.markdown("### *Bridging Science and Folklore*")
 
 # Logic to determine which data to use
