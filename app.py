@@ -1,105 +1,139 @@
 import streamlit as st
 import pandas as pd
-import time
+import plotly.express as px
+import anthropic
 import requests
 
-# 1. SETUP
-st.set_page_config(page_title="TideTales", layout="wide")
+# --- 1. SETUP & REBRANDING ---
+st.set_page_config(page_title="Tide Tales", layout="wide", page_icon="🌊")
 
-# 2. SIDEBAR
+# --- 2. DATA INGESTION (NASA GISTEMP Hardcoded) ---
+@st.cache_data
+def load_nasa_gistemp():
+    # Official NASA GISS Land-Ocean Temperature Index
+    url = "https://data.giss.nasa.gov/gistemp/tabledata_v4/GLB.Ts+dSST.csv"
+    
+    # NASA's CSV has metadata headers and repeats column names every 20 lines.
+    # na_values="***" handles NASA's way of marking missing data.
+    df = pd.read_csv(url, skiprows=1, na_values="***")
+    
+    # Select 'Year' and 'J-D' (Annual Mean Anomaly)
+    df_clean = df[['Year', 'J-D']].copy()
+    df_clean.columns = ['year', 'anomaly']
+    
+    # Clean up non-numeric rows (NASA's repeated headers)
+    df_clean = df_clean[pd.to_numeric(df_clean['year'], errors='coerce').notnull()]
+    df_clean['year'] = df_clean['year'].astype(int)
+    df_clean['anomaly'] = df_clean['anomaly'].astype(float)
+    
+    return df_clean
+
+# --- 3. SIDEBAR ---
 with st.sidebar:
-    st.title("🌿 TideTales Settings")
+    st.title("🌊 Tide Tales")
+    st.markdown("*Bridging the gap between scientific truth and cultural song.*")
+    st.divider()
+    
     api_key = st.text_input("Anthropic API Key", type="password")
     
+    # Auto-detect location for cultural context
     try:
         geo = requests.get('https://ipapi.co/json/').json()
-        loc = f"{geo.get('city', 'Kolkata')}, {geo.get('country_name', 'India')}"
+        loc = f"{geo.get('city', 'Unknown City')}, {geo.get('country_name', 'Unknown Country')}"
     except:
         loc = "your local region"
     
-    st.write(f"📍 **Context:** {loc}")
-    uploaded_file = st.file_uploader("Optional: Upload CSV", type="csv")
-    
+    st.write(f"📍 **Cultural Context:** {loc}")
     st.divider()
-    # If no file is uploaded, we use this sample data
-    use_sample = st.checkbox("Use Sample Climate Data", value=True)
+    st.caption("Data Source: NASA GISTEMP v4")
 
-# 3. MAIN UI
-st.title("🌿Tide Tales")
-st.markdown("### *Bridging Science and Folklore*")
+# --- 4. MAIN INTERFACE ---
+st.title("🌊 Tide Tales")
+st.subheader("Visual Evidence & Folklore Narrative")
 
-# Logic to determine which data to use
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    st.info("Using your uploaded data.")
-elif use_sample:
-    # Creating a small fake dataset about rising temperatures
-    df = pd.DataFrame({
-        'Year': [2020, 2021, 2022, 2023, 2024, 2025],
-        'Avg_Temp_C': [30.1, 30.4, 30.8, 31.2, 31.5, 31.9],
-        'Salinity_Level': [12, 13, 15, 18, 20, 22]
-    })
-    st.info("Using Sample Climate Data (Sundarbans Context).")
-else:
-    st.warning("Please upload a file or check 'Use Sample Data' in the sidebar.")
-    st.stop()
-
-# THE TRIGGER
-if st.button("✨ Weave 1500-Word Narrative"):
-    col1, col2 = st.columns(2)
+try:
+    # Load and clean the data
+    data = load_nasa_gistemp()
     
+    # --- WEEK 2: THE EVIDENCE PANEL ---
+    with st.container():
+        st.header("📊 Evidence Panel")
+        
+        # Plotly Line Chart
+        fig = px.line(data, x='year', y='anomaly', 
+                      labels={'year': 'Year', 'anomaly': 'Temp Anomaly (°C)'},
+                      title="Global Temperature Anomalies (1880 - Present)",
+                      template="plotly_dark")
+
+        # Customizing the chart for activists: clear, bold, and high-contrast
+        fig.add_hline(y=0, line_dash="dash", line_color="white", annotation_text="Baseline (1951-1980)")
+        fig.update_traces(line_color='#00D4FF', line_width=3)
+        fig.update_layout(hovermode="x unified")
+        
+        st.plotly_chart(fig, use_container_width=True)
+
+    # --- WEEK 3 PREVIEW: THE FACT PACK ---
+    col1, col2, col3 = st.columns(3)
+    latest_anomaly = data['anomaly'].iloc[-1]
+    start_anomaly = data['anomaly'].iloc[0]
+    total_change = latest_anomaly - start_anomaly
+
     with col1:
-        st.subheader("🌍 English Narrative")
-        eng_placeholder = st.empty()
-        
+        st.metric("Latest Record", f"{latest_anomaly}°C")
     with col2:
-        st.subheader(f"🗣️ Local Voice ({loc})")
-        loc_placeholder = st.empty()
+        st.metric("Historical Change", f"+{round(total_change, 2)}°C")
+    with col3:
+        st.metric("Period Tracked", f"{len(data)} Years")
 
-    if not api_key:
-        # --- IMPROVED DEMO MODE LOGIC ---
-        st.toast("Running in Demo Mode (No API Key)")
-        
-        eng_story = [
-            "Chapter 1: The Altered Rhythm. The elders always said the river had a pulse, but according to the data (Avg Temp: 31.9C), that pulse is quickening. ",
-            "The salt levels have climbed to 22%, a number the mangroves do not recognize. ",
-            "In the village of the delta, the spirits of the ancestors are whispering about the heat... ",
-            "This story would continue for 1500 words, weaving the salinity metrics into the legend of Bonbibi. "
-        ] * 10 # This makes it long
-        
-        loc_story = [
-            "প্রথম অধ্যায়: পরিবর্তিত ছন্দ। বড়োরা বলতেন নদীর একটা নাড়ি আছে, কিন্তু উপাত্ত বলছে সেই নাড়ি এখন দ্রুত ছুটছে। ",
-            "লবণাক্ততা এখন ২২ শতাংশে পৌঁছেছে, যা ম্যানগ্রোভ বন আগে কখনো দেখেনি। ",
-            "বদ্বীপের গ্রামে পূর্বপুরুষদের আত্মা উত্তাপের কথা বলছে... ",
-            "এই কাহিনী ১৫০০ শব্দ জুড়ে চলিবে, যেখানে লবণের মাত্রা আর বনবিবির উপাখ্যান এক হয়ে মিশে যাবে।"
-        ] * 10
+    # --- THE NARRATIVE GENERATOR ---
+    st.divider()
+    if st.button("✨ Weave 1500-Word Narrative"):
+        if not api_key:
+            st.error("Please enter your Anthropic API Key in the sidebar.")
+        else:
+            # We take the most recent 30 years to give Claude context
+            recent_context = data.tail(30).to_string(index=False)
+            
+            client = anthropic.Anthropic(api_key=api_key)
+            
+            # The "Two-Column" placeholders
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("🌍 English Tale")
+                eng_p = st.empty()
+            with c2:
+                st.subheader(f"🗣️ Local Voice ({loc})")
+                loc_p = st.empty()
 
-        # Simulate real-time streaming for English
-        full_eng = ""
-        for snippet in eng_story:
-            for word in snippet.split():
-                full_eng += word + " "
-                eng_placeholder.markdown(full_eng + "▌")
-                time.sleep(0.05) # Speed of reading
-        eng_placeholder.markdown(full_eng)
+            prompt = f"""
+            Using this NASA data: {recent_context}
+            Write a 1500-word immersive epic story set in {loc}.
+            Structure: Use the specific folklore, myths, and rhythmic storytelling patterns of {loc}.
+            The data is the environment, not a villain.
+            Write the full story in English, then the full story in the local vernacular of {loc}.
+            Use the markers [ENGLISH] and [LOCAL] to separate them.
+            """
 
-        # Simulate real-time streaming for Local
-        full_loc = ""
-        for snippet in loc_story:
-            for word in snippet.split():
-                full_loc += word + " "
-                loc_placeholder.markdown(full_loc + "▌")
-                time.sleep(0.05)
-        loc_placeholder.markdown(full_loc)
-        
-        st.balloons()
-        
-    else:
-        # --- REAL AI LOGIC ---
-        # (This section will run only if you paste your actual API key)
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        
-        with st.spinner("Claude is weaving the epic..."):
-            # Full AI streaming code goes here
-            st.write("AI connection active. Generating 1500 words...")
+            # Streaming logic
+            full_resp = ""
+            with client.messages.stream(
+                model="claude-3-5-sonnet-20240620",
+                max_tokens=8192,
+                messages=[{"role": "user", "content": prompt}],
+            ) as stream:
+                for text in stream.text_stream:
+                    full_resp += text
+                    if "[LOCAL]" in full_resp:
+                        parts = full_resp.split("[LOCAL]")
+                        eng_text = parts[0].replace("[ENGLISH]", "").strip()
+                        loc_text = parts[1].strip()
+                        eng_p.markdown(eng_text)
+                        loc_p.markdown(loc_text + " ▌")
+                    else:
+                        eng_text = full_resp.replace("[ENGLISH]", "").strip()
+                        eng_p.markdown(eng_text + " ▌")
+
+            st.balloons()
+
+except Exception as e:
+    st.error(f"Error loading NASA data: {e}")
