@@ -47,52 +47,77 @@ with st.sidebar:
     
     demo_mode = st.toggle("Enable Demo Mode", value=True)
 
-# --- 4. DATA PROCESSING ---
-# --- 4. DATA PROCESSING (Smart Auto-Detection) ---
+# --- 4. SMART DATA PROCESSING (AI-DRIVEN) ---
 
-def auto_detect_columns(df):
-    cols = df.columns.tolist()
-    
-    # 1. Try to find the 'Year' column
-    year_keywords = ['year', 'yr', 'date', 'time', 'dt', 'period']
-    year_col = next((c for c in cols if any(k in c.lower() for k in year_keywords)), None)
-    
-    # If keywords fail, look for a column with 4-digit numbers (like 1995)
-    if not year_col:
-        for c in cols:
-            numeric_vals = pd.to_numeric(df[c], errors='coerce').dropna()
-            if not numeric_vals.empty and numeric_vals.iloc[0] > 1700 and numeric_vals.iloc[0] < 2100:
-                year_col = c
-                break
-    
-    # 2. Try to find the 'Data' column
-    data_keywords = ['anomaly', 'temp', 'val', 'data', 'gistemp', 'sst', 'mean', 'avg', 'index']
-    data_col = next((c for c in cols if any(k in c.lower() for k in data_keywords) and c != year_col), None)
-    
-    # Fallback: Pick the first numeric column that isn't the Year
-    if not data_col:
-        for c in cols:
-            if c != year_col and pd.api.types.is_numeric_dtype(df[c]):
-                data_col = c
-                break
-                
-    return year_col, data_col
+def ai_detect_columns(df, api_key):
+    """Sends headers and sample data to Claude to identify columns."""
+    if not api_key:
+        # Fallback to simple logic if no key is present
+        return "Year", df.columns[1] 
 
-# Execute Data Loading
+    client = anthropic.Anthropic(api_key=api_key)
+    
+    # We send only a tiny snippet of the data to save tokens
+    sample_data = df.head(5).to_string()
+    
+    prompt = f"""
+    Look at this climate dataset sample:
+    {sample_data}
+    
+    Identify which column represents the 'Year/Time' and which represents the 'Scientific Data/Anomaly/Measurement'.
+    The CSV headers are: {df.columns.tolist()}
+    
+    Return ONLY the column names in the following format:
+    Year: [column_name]
+    Data: [column_name]
+    """
+    
+    try:
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20240620",
+            max_tokens=100,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        answer = response.content[0].text
+        
+        # Simple parsing of the AI's response
+        y_col = answer.split("Year:")[1].split("\n")[0].strip()
+        d_col = answer.split("Data:")[1].split("\n")[0].strip()
+        return y_col, d_col
+    except:
+        return None, None
+
 if data_source == "Upload My Own CSV" and uploaded_file:
-    raw_data = pd.read_csv(uploaded_file)
-    y_col, d_col = auto_detect_columns(raw_data)
+    # We try reading with a skip and without a skip to find the 'real' headers
+    # AI will decide which version makes sense
+    raw_data = pd.read_csv(uploaded_file, na_values="***")
     
-    if y_col and d_col:
-        st.success(f"✅ Auto-detected: **'{y_col}'** as Time and **'{d_col}'** as Data.")
-        data = raw_data[[y_col, d_col]].copy()
-        data.columns = ['year', 'anomaly']
-    else:
-        st.error("Could not automatically identify data columns. Please ensure your CSV has clear headers like 'Year' and 'Temp'.")
-        st.stop()
+    if st.button("🔍 Analyze & Map Data"):
+        if not api_key:
+            st.error("AI Mapping requires an Anthropic API Key. Please enter it in the sidebar.")
+        else:
+            with st.spinner("AI is analyzing your dataset structure..."):
+                y_col, d_col = ai_detect_columns(raw_data, api_key)
+                
+                if y_col in raw_data.columns and d_col in raw_data.columns:
+                    st.success(f"✅ AI identified: Time='{y_col}', Data='{d_col}'")
+                    # Store in session state so it persists
+                    st.session_state['data'] = raw_data[[y_col, d_col]].copy()
+                    st.session_state['data'].columns = ['year', 'anomaly']
+                else:
+                    st.error("AI couldn't confidently map the columns. Check your file headers.")
+
+# Pull data from session state if available
+if 'data' in st.session_state:
+    data = st.session_state['data']
 else:
+    # Default to hardcoded NASA data if nothing is uploaded/mapped
     data = load_nasa_gistemp()
 
+# Final clean (ensure numbers are numbers)
+data['year'] = pd.to_numeric(data['year'], errors='coerce')
+data['anomaly'] = pd.to_numeric(data['anomaly'], errors='coerce')
+data = data.dropna()
 # Force numeric and clean
 data['year'] = pd.to_numeric(data['year'], errors='coerce')
 data['anomaly'] = pd.to_numeric(data['anomaly'], errors='coerce')
