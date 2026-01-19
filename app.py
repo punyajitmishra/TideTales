@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 # --- 1. APP CONFIGURATION ---
+# We set wide mode and a custom theme color
 st.set_page_config(
     page_title="Tide Tales", 
     layout="wide", 
@@ -14,248 +15,282 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. THE LOCATION ENGINE (Accurate Detection) ---
+# --- 2. ACCURATE LOCATION ENGINE ---
 @st.cache_data(ttl=3600)
-def get_accurate_location():
-    """Tries multiple services to find the user's city."""
-    # Try Service 1: ipapi.co (Generally good for India)
-    try:
-        data = requests.get('https://ipapi.co/json/', timeout=5).json()
-        if data.get('city'):
-            return f"{data.get('city')}, {data.get('country_name')}"
-    except:
-        pass
+def get_geo_location():
+    """Tries multiple IP-based services to find the city accurately."""
+    services = [
+        'https://ipapi.co/json/',
+        'http://ip-api.com/json/',
+        'https://ipwho.is/'
+    ]
+    for service in services:
+        try:
+            response = requests.get(service, timeout=5).json()
+            city = response.get('city')
+            country = response.get('country_name') or response.get('country')
+            if city:
+                return f"{city}, {country}"
+        except:
+            continue
+    return "Bhubaneswar, India" # Robust default
 
-    # Try Service 2: ip-api.com (Fallback)
-    try:
-        data = requests.get('http://ip-api.com/json/', timeout=5).json()
-        if data.get('city'):
-            return f"{data.get('city')}, {data.get('country')}"
-    except:
-        pass
+# --- 3. SCIENCE TYPE DETECTOR ---
+def detect_science_metadata(column_name, data_series):
+    """
+    Analyzes column names and data values to determine 
+    the science type, units, and cultural metaphors.
+    """
+    name = str(column_name).lower()
+    avg_val = data_series.mean()
     
-    return "Bhubaneswar, India" # Default if all else fails
+    # 1. Air Quality (AQI)
+    if any(k in name for k in ['aqi', 'air', 'quality', 'pm2', 'pm10']):
+        return {
+            "unit": "AQI Index",
+            "label": "Air Quality Index",
+            "metaphor": "The Breath of the City",
+            "color": "#FF5733" # Orange/Red
+        }
+    
+    # 2. Temperature
+    if any(k in name for k in ['temp', 'anomaly', 'j-d', 'celsius', 'farenheit']):
+        return {
+            "unit": "°C Anomaly",
+            "label": "Temperature Anomaly",
+            "metaphor": "The Fever of the Earth",
+            "color": "#00D4FF" # Cyan
+        }
+    
+    # 3. Sea Level / Water
+    if any(k in name for k in ['sea', 'level', 'tide', 'mm', 'water', 'ocean']):
+        return {
+            "unit": "mm",
+            "label": "Sea Level Rise",
+            "metaphor": "The Rising Tides",
+            "color": "#2E7D32" # Deep Green
+        }
+        
+    # 4. Carbon / CO2
+    if any(k in name for k in ['co2', 'carbon', 'ppm']):
+        return {
+            "unit": "ppm",
+            "label": "Atmospheric CO2",
+            "metaphor": "The Heavy Sky",
+            "color": "#8E44AD" # Purple
+        }
 
-# --- 3. THE DATA LOADING ENGINE ---
+    # Fallback based on typical ranges
+    if avg_val > 300: # Likely CO2
+        return {"unit": "ppm", "label": "Carbon Levels", "metaphor": "The Ancient Air", "color": "#8E44AD"}
+    if avg_val > 50: # Likely AQI
+        return {"unit": "Index", "label": "Pollution Levels", "metaphor": "The Hazy Breath", "color": "#FF5733"}
+    
+    return {"unit": "Units", "label": "Measurement", "metaphor": "The Changing Land", "color": "#FFFFFF"}
+
+# --- 4. DATA INGESTION (NASA + AUTO-CLEAN) ---
 @st.cache_data
-def fetch_nasa_data():
-    """Fetches and cleans the official NASA GISTEMP dataset."""
+def fetch_nasa_gistemp():
+    """Fetches and cleans NASA GISTEMP v4."""
     url = "https://data.giss.nasa.gov/gistemp/tabledata_v4/GLB.Ts+dSST.csv"
     try:
-        # NASA CSVs start with a title row, so we skip it
         df = pd.read_csv(url, skiprows=1, na_values="***")
-        # J-D is the standard NASA column for Annual Mean Anomaly
         if 'Year' in df.columns and 'J-D' in df.columns:
             df_clean = df[['Year', 'J-D']].copy()
             df_clean.columns = ['year', 'anomaly']
-            df_clean['year'] = pd.to_numeric(df_clean['year'], errors='coerce')
-            df_clean['anomaly'] = pd.to_numeric(df_clean['anomaly'], errors='coerce')
-            return df_clean.dropna()
+            df_clean = df_clean.apply(pd.to_numeric, errors='coerce').dropna()
+            return df_clean
     except Exception as e:
-        st.error(f"NASA Connection Error: {e}")
-    return pd.DataFrame({'year': [2000, 2024], 'anomaly': [0.4, 1.1]})
+        st.error(f"NASA Site Connection Failed: {e}")
+    # Fallback fake data if NASA is offline
+    return pd.DataFrame({'year': range(1900, 2025), 'anomaly': np.linspace(-0.3, 1.2, 125)})
 
-# --- 4. THE COLUMN DETECTION ENGINE (AI + Robust Fallback) ---
-def detect_data_columns(df, api_key=None):
-    """Identifies which column is Time and which is Data."""
+# --- 5. THE AI COLUMN SNIFFER (Real AI + Heuristic Fallback) ---
+def ai_sniff_columns(df, api_key=None):
+    """Detects Time and Data columns using AI or Keywords."""
     cols = df.columns.tolist()
     
-    # --- STEP 1: If API Key exists, use Claude ---
+    # 1. Try Real AI if key exists
     if api_key:
         try:
             client = anthropic.Anthropic(api_key=api_key)
             sample = df.head(5).to_string()
-            prompt = f"Analyze these CSV headers: {cols}. Here is a sample: {sample}. Tell me which column is Year/Time and which is the Data/Anomaly. Return ONLY: Year: [col], Data: [col]"
-            
+            prompt = f"Analyze these CSV headers: {cols}. Data sample: {sample}. Return ONLY -> Year: [col_name], Data: [col_name]"
             response = client.messages.create(
                 model="claude-3-5-sonnet-20240620",
                 max_tokens=100,
                 messages=[{"role": "user", "content": prompt}]
             )
             result = response.content[0].text
-            y_name = result.split("Year:")[1].split("\n")[0].strip()
-            d_name = result.split("Data:")[1].split("\n")[0].strip()
-            return y_name, d_name
-        except Exception as e:
-            st.warning(f"AI Mapping failed, using internal logic. Error: {e}")
+            y_col = result.split("Year:")[1].split("\n")[0].strip()
+            d_col = result.split("Data:")[1].split("\n")[0].strip()
+            return y_col, d_col
+        except:
+            pass # Fallback to Heuristic if AI fails
 
-    # --- STEP 2: Robust Heuristic Fallback (Fake AI) ---
-    detected_year = None
-    detected_data = None
+    # 2. Heuristic Logic (Fake AI)
+    y_col = next((c for c in cols if any(k in str(c).lower() for k in ['year', 'yr', 'date', 'time', 'period'])), None)
     
-    # Find Year: Look for 4-digit numbers or keywords
-    for c in cols:
-        col_str = str(c).lower()
-        if any(k in col_str for k in ['year', 'yr', 'date', 'time', 'period']):
-            detected_year = c
-            break
+    # For Data, look for keywords or the first numeric column that isn't Year
+    d_keywords = ['temp', 'anom', 'val', 'j-d', 'annual', 'index', 'aqi', 'ppm']
+    d_col = next((c for c in cols if any(k in str(c).lower() for k in d_keywords) and c != y_col), None)
     
-    if not detected_year:
-        # Check values if names don't match
-        for c in cols:
-            first_vals = pd.to_numeric(df[c], errors='coerce').dropna()
-            if not first_vals.empty:
-                if 1700 < first_vals.iloc[0] < 2100:
-                    detected_year = c
-                    break
-
-    # Find Data: Look for climate keywords
-    for c in cols:
-        if c == detected_year: continue
-        col_str = str(c).lower()
-        if any(k in col_str for k in ['temp', 'anom', 'val', 'j-d', 'annual', 'gistemp', 'sst']):
-            detected_data = c
-            break
-            
-    # Ultimate Fallback: Just take whatever is left
-    if not detected_year: detected_year = cols[0]
-    if not detected_data: 
-        remaining_cols = [c for c in cols if c != detected_year]
-        detected_data = remaining_cols[0] if remaining_cols else cols[0]
+    if not y_col: y_col = cols[0]
+    if not d_col: 
+        others = [c for c in cols if c != y_col]
+        d_col = others[0] if others else cols[0]
         
-    return detected_year, detected_data
+    return y_col, d_col
 
-# --- 5. SIDEBAR LOGIC ---
+# --- 6. SIDEBAR SETUP ---
 with st.sidebar:
     st.title("🌊 Tide Tales Settings")
-    st.markdown("Use these controls to adjust the narrative context.")
     st.divider()
     
-    # API Key
-    api_key = st.text_input("Anthropic API Key", type="password", key="sidebar_api_key")
+    # API KEY
+    api_key = st.text_input("Anthropic API Key", type="password", key="side_key")
     
-    # Location Fix
-    raw_loc = get_accurate_location()
-    st.write(f"Detected Location: **{raw_loc}**")
-    user_location = st.text_input("📍 Confirm/Edit Location", value=raw_loc, key="sidebar_location")
+    # LOCATION (Manual Override Fix)
+    detected_loc = get_geo_location()
+    st.write(f"Detected: **{detected_loc}**")
+    final_location = st.text_input("📍 Confirm Your Location", value=detected_loc, key="side_loc")
     
     st.divider()
     
-    # Data Selection
-    source_choice = st.radio(
-        "Data Source", 
-        ["Official NASA GISTEMP", "Manual CSV Upload"], 
-        key="sidebar_source"
-    )
+    # DATA SOURCE
+    data_source = st.radio("Data Source", ["NASA Official GISTEMP", "Manual CSV Upload"], key="side_src")
     
-    user_file = None
-    if source_choice == "Manual CSV Upload":
-        user_file = st.file_uploader("Upload CSV", type="csv", key="sidebar_uploader")
+    uploaded_file = None
+    if data_source == "Manual CSV Upload":
+        uploaded_file = st.file_uploader("Upload CSV File", type="csv", key="side_file")
     
-    demo_mode = st.toggle("Enable Demo Mode", value=True, key="sidebar_demo")
+    demo_mode = st.toggle("Enable Demo Narrative Mode", value=True, key="side_demo")
 
-# --- 6. DATA PROCESSING FLOW ---
-# Initialize session state so data isn't lost on rerun
-if 'current_df' not in st.session_state:
-    st.session_state['current_df'] = fetch_nasa_data()
+# --- 7. DATA PROCESSING & SESSION STATE ---
+# We use session state to keep data alive across widget clicks
+if 'active_df' not in st.session_state:
+    st.session_state['active_df'] = fetch_nasa_gistemp()
 
-# Logic for custom uploads
-if source_choice == "Manual CSV Upload" and user_file:
-    # Handle NASA files which might need skiprows
+if data_source == "Manual CSV Upload" and uploaded_file:
+    # Logic to handle NASA-style files with headers in Row 1
     try:
-        # Peek at the file
-        test_df = pd.read_csv(user_file, nrows=5)
-        user_file.seek(0) # Reset
+        # Check if we need to skip a row
+        peek = pd.read_csv(uploaded_file, nrows=2)
+        uploaded_file.seek(0)
         
-        # Logic to check if Row 0 is junk (common in NASA files)
-        if "Land-Ocean" in str(test_df.columns[0]):
-            df_to_map = pd.read_csv(user_file, skiprows=1, na_values="***")
+        if "Land-Ocean" in str(peek.columns[0]):
+            raw_df = pd.read_csv(uploaded_file, skiprows=1, na_values="***")
         else:
-            df_to_map = pd.read_csv(user_file, na_values="***")
-            
-        if st.button("🔍 Analyze & Map Data Structure", key="btn_analyze"):
-            with st.spinner("Analyzing columns..."):
-                y_col, d_col = detect_data_columns(df_to_map, api_key)
+            raw_df = pd.read_csv(uploaded_file, na_values="***")
+        
+        if st.button("🔍 Analyze Data Structure", key="side_analyze"):
+            with st.spinner("AI is sniffing the columns..."):
+                y_name, d_name = ai_sniff_columns(raw_df, api_key)
                 
-                # Double check the names exist
-                if y_col in df_to_map.columns and d_col in df_to_map.columns:
-                    st.success(f"Success! Mapping **{y_col}** as Time and **{d_col}** as Data.")
-                    final_df = df_to_map[[y_col, d_col]].copy()
-                    final_df.columns = ['year', 'anomaly']
-                    final_df = final_df.apply(pd.to_numeric, errors='coerce').dropna()
-                    st.session_state['current_df'] = final_df
+                if y_name in raw_df.columns and d_name in raw_df.columns:
+                    st.success(f"Mapping: {y_name} (Time) & {d_name} (Data)")
+                    # Standardize
+                    processed = raw_df[[y_name, d_name]].copy()
+                    processed.columns = ['year', 'anomaly']
+                    processed['year'] = pd.to_numeric(processed['year'], errors='coerce')
+                    processed['anomaly'] = pd.to_numeric(processed['anomaly'], errors='coerce')
+                    st.session_state['active_df'] = processed.dropna()
                 else:
-                    st.error(f"Mapping failed. Found '{y_col}' and '{d_col}' but they don't exist in file.")
+                    st.error("Could not find matching columns. Check CSV headers.")
     except Exception as e:
-        st.error(f"File Error: {e}")
+        st.error(f"Load Error: {e}")
 
-elif source_choice == "Official NASA GISTEMP":
-    st.session_state['current_df'] = fetch_nasa_data()
+elif data_source == "NASA Official GISTEMP":
+    st.session_state['active_df'] = fetch_nasa_gistemp()
 
-# Final Clean Up of the active data
-data = st.session_state['current_df'].copy()
-data['year'] = pd.to_numeric(data['year'], errors='coerce')
-data['anomaly'] = pd.to_numeric(data['anomaly'], errors='coerce')
-data = data.dropna()
+# Assign working dataframe
+working_data = st.session_state['active_df'].copy()
 
-# --- 7. MAIN DASHBOARD ---
+# --- 8. MAIN DASHBOARD ---
 st.title("🌊 Tide Tales")
 
-# Time Range Slider
-min_yr, max_yr = int(data['year'].min()), int(data['year'].max())
-if min_yr >= max_yr: max_yr = min_yr + 1
-selected_years = st.slider("Select Time Range", min_yr, max_yr, (min_yr, max_yr), key="main_slider")
+# Time Slider (Ensuring Int values to prevent 0-1 bug)
+min_year = int(working_data['year'].min())
+max_year = int(working_data['year'].max())
+if min_year >= max_year: max_year = min_year + 1
+
+selected_range = st.slider(
+    "Select Analysis Timeframe", 
+    min_year, max_year, (min_year, max_year), 
+    key="main_slider"
+)
 
 # Filter Data
-filtered = data[(data['year'] >= selected_years[0]) & (data['year'] <= selected_years[1])]
+filtered_df = working_data[(working_data['year'] >= selected_range[0]) & (working_data['year'] <= selected_range[1])]
 
-if not filtered.empty:
-    # --- MATH: THE FACT PACK ---
-    start_val = filtered['anomaly'].iloc[0]
-    end_val = filtered['anomaly'].iloc[-1]
-    net_change = end_val - start_val
-    peak_val = filtered['anomaly'].max()
-    trough_val = filtered['anomaly'].min()
+if not filtered_df.empty:
+    # MATH: THE FACT PACK (Week 3 Objective)
+    val_start = filtered_df['anomaly'].iloc[0]
+    val_end = filtered_df['anomaly'].iloc[-1]
+    net_shift = val_end - val_start
+    peak = filtered_df['anomaly'].max()
+    trough = filtered_df['anomaly'].min()
     
-    # Regression for the Trendline
-    slope, intercept = np.polyfit(filtered['year'], filtered['anomaly'], 1)
+    # Slope (Trendline)
+    slope, intercept = np.polyfit(filtered_df['year'], filtered_df['anomaly'], 1)
+    
+    # Detect Metadata (Science Type)
+    # We pass the anomaly column to detect what we are looking at
+    sci = detect_science_metadata("anomaly", filtered_df['anomaly'])
 
-    # --- UI: EVIDENCE PANEL ---
-    st.header("📊 Evidence Panel")
+    # EVIDENCE PANEL (Interactive Plotly)
+    st.header(f"📊 Evidence Panel: {sci['label']}")
+    st.write(f"Observing scientific trends in **{final_location}**.")
+    
     fig = px.line(
-        filtered, x='year', y='anomaly', 
-        title=f"Climate Observation: {selected_years[0]} - {selected_years[1]}",
+        filtered_df, x='year', y='anomaly', 
+        title=f"{sci['label']} Trend ({selected_range[0]} - {selected_range[1]})",
         template="plotly_dark",
-        labels={'year': 'Year', 'anomaly': 'Temperature Anomaly (°C)'}
+        labels={'year': 'Year', 'anomaly': sci['unit']}
     )
     # Add Trendline
     fig.add_scatter(
-        x=filtered['year'], 
-        y=slope*filtered['year'] + intercept, 
+        x=filtered_df['year'], 
+        y=slope*filtered_df['year'] + intercept, 
         name="Mathematical Trend", 
         line=dict(color='red', dash='dot')
     )
+    fig.update_traces(line_color=sci['color'], line_width=3)
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- UI: FACT PACK ---
-    st.subheader("📋 The Fact Pack (Calculated)")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Net Shift", f"{round(net_change, 2)}°C")
-    c2.metric("Warming Rate", f"{round(slope, 3)}°C/yr")
-    c3.metric("Highest Peak", f"{round(peak_val, 2)}°C")
-    c4.metric("Lowest Trough", f"{round(trough_val, 2)}°C")
+    # THE FACT PACK METRICS
+    st.subheader(f"📋 {sci['label']} Metrics")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Net Shift", f"{round(net_shift, 2)} {sci['unit']}")
+    m2.metric("Warming Rate", f"{round(slope, 3)} / yr")
+    m3.metric("Peak Record", f"{round(peak, 2)}")
+    m4.metric("Trough Record", f"{round(trough, 2)}")
 
-    # --- UI: NARRATIVE (Week 3 Deliverable) ---
+    # THE NARRATIVE GENERATOR
     st.divider()
-    st.header("📖 Local Narrative")
+    st.header(f"📖 The Story of {sci['metaphor']}")
     
-    if st.button("✨ Weave Narrative", key="btn_weave"):
-        # Template story that proves Week 3 math is working
-        story = f"""
-        In the land of {user_location}, a story is being written by the shifting tides. 
-        Between the years {selected_years[0]} and {selected_years[1]}, the physical world 
-        has transformed by {round(net_change, 2)} degrees. 
-        
-        The peaks of this fever reached {round(peak_val, 2)}°C, while the troughs fell to {round(trough_val, 2)}°C. 
-        Currently, the land warms at a measured pace of {round(slope, 3)} degrees every single year.
-        """
-        
+    if st.button("✨ Weave the Narrative", key="main_weave"):
         if api_key and not demo_mode:
-            st.info("AI Mode: Claude is reading the Fact Pack for Week 4 integration...")
-            # (Week 4 Code will go here)
+            st.info("AI Mode: Engaging Claude 3.5 Sonnet...")
+            # (Real AI Logic will be finalized in Week 4)
         else:
-            st.info("Demo Mode: Generating Narrative from Calculated Stats")
-            st.write(story)
+            # ROBUST DEMO NARRATIVE (Multi-Chapter Structure)
+            st.toast("Generating Demo Story Structure...")
+            
+            # This is the Week 3 Deliverable: A structured story using the Fact Pack
+            chapters = [
+                f"### Chapter 1: The Omens\nIn the ancient memory of **{final_location}**, the land spoke a language of balance. But between {selected_range[0]} and {selected_range[1]}, a new dialect has emerged. The data reveals a net shift of **{round(net_shift, 2)} {sci['unit']}**, a change that is felt in the drying of the wells and the heat of the noon-day sun.",
+                f"### Chapter 2: The Rising Fever\nScientific observation confirms that this is not a random flicker. The trendline, sharp as a hunter's arrow, moves at a rate of **{round(slope, 3)} units per year**. In the year of the peak, which reached **{round(peak, 2)}**, the story of {final_location} changed forever.",
+                f"### Chapter 3: The Cultural Lens\nFolklore tells us of spirits that once guarded our tides, but even they now navigate a world dictated by **{sci['label']}**. What was once a mystery is now a measurement. The trough of **{round(trough, 2)}** is a ghost of a cooler past, a reminder of the world our ancestors once knew.",
+                f"### Chapter 4: The Path Forward\nAs we close the records on this timeframe, the measurement stands at **{round(val_end, 2)}**. The narrative is no longer just about numbers on a chart; it is about how the people of {final_location} will translate this scientific truth into the songs of their survival."
+            ]
+            
+            # Display chapters with a slight delay for "typing" effect
+            for chap in chapters:
+                st.markdown(chap)
+                time.sleep(0.4)
+            
             st.balloons()
 else:
-    st.error("The selected range contains no data. Please adjust the slider.")
+    st.error("Adjust the slider to find valid data points.")
