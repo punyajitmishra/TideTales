@@ -48,12 +48,32 @@ with st.sidebar:
     demo_mode = st.toggle("Enable Demo Mode", value=True)
 
 # --- 4. DATA PROCESSING ---
-if uploaded_file:
+if data_source == "Upload My Own CSV" and uploaded_file:
     # Handle user-uploaded data
     raw_data = pd.read_csv(uploaded_file)
-    # Basic cleaning for user data (assumes first two columns are Year/Value)
-    raw_data.columns = ['year', 'anomaly']
-    data = raw_data.apply(pd.to_numeric, errors='coerce').dropna()
+    
+    st.write("📋 **Identify your data columns:**")
+    col_options = raw_data.columns.tolist()
+    
+    # Let user pick the columns
+    c1, c2 = st.columns(2)
+    with c1:
+        year_col = st.selectbox("Which column is the Year/Time?", col_options, index=0)
+    with c2:
+        val_col = st.selectbox("Which column is the Data/Value?", col_options, index=1 if len(col_options) > 1 else 0)
+    
+    # Create the standardized dataframe
+    data = raw_data[[year_col, val_col]].copy()
+    data.columns = ['year', 'anomaly']
+    
+    # Clean it: Force numeric and drop empty rows
+    data['year'] = pd.to_numeric(data['year'], errors='coerce')
+    data['anomaly'] = pd.to_numeric(data['anomaly'], errors='coerce')
+    data = data.dropna()
+    
+    if data.empty:
+        st.error("Error: The columns you selected don't contain enough numeric data. Please check your CSV.")
+        st.stop()
 else:
     # Use hardcoded NASA data
     data = load_nasa_gistemp()
