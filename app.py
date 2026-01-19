@@ -48,36 +48,94 @@ with st.sidebar:
     demo_mode = st.toggle("Enable Demo Mode", value=True)
 
 # --- 4. DATA PROCESSING ---
+# --- 4. DATA PROCESSING (Smart Auto-Detection) ---
+
+def auto_detect_columns(df):
+    cols = df.columns.tolist()
+    
+    # 1. Try to find the 'Year' column
+    year_keywords = ['year', 'yr', 'date', 'time', 'dt', 'period']
+    year_col = next((c for c in cols if any(k in c.lower() for k in year_keywords)), None)
+    
+    # If keywords fail, look for a column with 4-digit numbers (like 1995)
+    if not year_col:
+        for c in cols:
+            numeric_vals = pd.to_numeric(df[c], errors='coerce').dropna()
+            if not numeric_vals.empty and numeric_vals.iloc[0] > 1700 and numeric_vals.iloc[0] < 2100:
+                year_col = c
+                break
+    
+    # 2. Try to find the 'Data' column
+    data_keywords = ['anomaly', 'temp', 'val', 'data', 'gistemp', 'sst', 'mean', 'avg', 'index']
+    data_col = next((c for c in cols if any(k in c.lower() for k in data_keywords) and c != year_col), None)
+    
+    # Fallback: Pick the first numeric column that isn't the Year
+    if not data_col:
+        for c in cols:
+            if c != year_col and pd.api.types.is_numeric_dtype(df[c]):
+                data_col = c
+                break
+                
+    return year_col, data_col
+
+# Execute Data Loading
 if data_source == "Upload My Own CSV" and uploaded_file:
-    # Handle user-uploaded data
     raw_data = pd.read_csv(uploaded_file)
+    y_col, d_col = auto_detect_columns(raw_data)
     
-    st.write("📋 **Identify your data columns:**")
-    col_options = raw_data.columns.tolist()
-    
-    # Let user pick the columns
-    c1, c2 = st.columns(2)
-    with c1:
-        year_col = st.selectbox("Which column is the Year/Time?", col_options, index=0)
-    with c2:
-        val_col = st.selectbox("Which column is the Data/Value?", col_options, index=1 if len(col_options) > 1 else 0)
-    
-    # Create the standardized dataframe
-    data = raw_data[[year_col, val_col]].copy()
-    data.columns = ['year', 'anomaly']
-    
-    # Clean it: Force numeric and drop empty rows
-    data['year'] = pd.to_numeric(data['year'], errors='coerce')
-    data['anomaly'] = pd.to_numeric(data['anomaly'], errors='coerce')
-    data = data.dropna()
-    
-    if data.empty:
-        st.error("Error: The columns you selected don't contain enough numeric data. Please check your CSV.")
+    if y_col and d_col:
+        st.success(f"✅ Auto-detected: **'{y_col}'** as Time and **'{d_col}'** as Data.")
+        data = raw_data[[y_col, d_col]].copy()
+        data.columns = ['year', 'anomaly']
+    else:
+        st.error("Could not automatically identify data columns. Please ensure your CSV has clear headers like 'Year' and 'Temp'.")
         st.stop()
 else:
-    # Use hardcoded NASA data
     data = load_nasa_gistemp()
 
+# Force numeric and clean
+data['year'] = pd.to_numeric(data['year'], errors='coerce')
+data['anomaly'] = pd.to_numeric(data['anomaly'], errors='coerce')
+data = data.dropna()
+
+# --- WEEK 3: DATE RANGE SELECTION ---
+min_y, max_y = int(data['year'].min()), int(data['year'].max())
+selected_years = st.slider("Select Time Range", min_y, max_y, (min_y, max_y))
+filtered_data = data[(data['year'] >= selected_years[0]) & (data['year'] <= selected_years[1])]
+
+# --- WEEK 3: THE FACT PACK (Math) ---
+start_val = filtered_data['anomaly'].iloc[0]
+end_val = filtered_data['anomaly'].iloc[-1]
+net_change = end_val - start_val
+max_val = filtered_data['anomaly'].max()
+slope, intercept = np.polyfit(filtered_data['year'], filtered_data['anomaly'], 1)
+
+# --- 5. MAIN INTERFACE ---
+st.title("🌊 Tide Tales")
+
+# EVIDENCE PANEL
+st.header("📊 Evidence Panel")
+fig = px.line(filtered_data, x='year', y='anomaly', template="plotly_dark")
+fig.add_scatter(x=filtered_data['year'], y=slope*filtered_data['year'] + intercept, 
+                name="Trendline", line=dict(color='red', dash='dot'))
+st.plotly_chart(fig, use_container_width=True)
+
+# FACT PACK
+st.subheader("📋 The Fact Pack")
+c1, c2, c3 = st.columns(3)
+c1.metric("Net Change", f"{round(net_change, 2)}°C")
+c2.metric("Peak Anomaly", f"{round(max_val, 2)}°C")
+c3.metric("Warming Rate", f"{round(slope, 3)}°C/yr")
+
+# WEEK 3 NARRATIVE (Template-based)
+st.divider()
+if st.button("✨ Generate Story"):
+    story = f"In the region of {loc}, the truth of the tides is written in numbers. " \
+            f"Between {selected_years[0]} and {selected_years[1]}, we have seen a net change of {round(net_change, 2)}°C. " \
+            f"The land is warming at a rate of {round(slope, 3)} degrees per year."
+    st.info("Story matching calculated stats:")
+    st.write(story)
+    
 # --- WEEK 3: DATE RANGE SELECTION ---
 min_year, max_year = int(data['year'].min()), int(data['year'].max())
 selected_years = st.slider("Select Time Range", min_year, max_year, (min_year, max_year))
