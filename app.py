@@ -273,8 +273,68 @@ if not filtered_df.empty:
             # [Add your other ch_v lists here if they aren't already in your code]
 
             story_chapters = [
-                f"### Chapter 1: The Omens\n{random.choice(ch1_v)} The data reveals a shift of **{round(net_shift, 2)} {sci['unit']}**, but to the people here, it is {impact}.",
-                # [Add Chapter 2, 3, 4 as per previous version]
+                   f"""
+                ### Chapter 1: The Omens of {sci['element']}
+                {random.choice(ch1_v)} 
+                They spoke of the 'Great Cycle,' a time when the world behaved according to the laws 
+                laid down by the ancestors. Long before the records began, 
+                the earth of **{loc}** had its own way of keeping time—measured in the arrival of the 
+                first monsoon and the depth of the winter frost. Every tree, every stone, and every 
+                breath of wind was a syllable in a long, predictable song.
+                
+                But the data reveals a shift of **{round(net_shift, 2)} {sci['unit']}**, a change that 
+                is felt in the drying of the wells and the heat of the noon-day sun. 
+                This isn't just a digit on a spreadsheet; it is the reason the mango blossoms are late, 
+                and why the spirits of the woods in **{loc}** seem restless. The old songs no longer 
+                describe the rhythm of the rains. The science calls it an anomaly; the folklore calls it 'The Unraveling.' 
+                It is as if {impact}, and we are left to interpret the new, harsh dialect of the earth.
+                """,
+                f"""
+                ### Chapter 2: The Quickening Fever
+                {random.choice(ch2_v)} 
+                Think of the massive momentum required to shift the entire climate of a region. 
+                The measurement of {sci['label']} is no longer a fluctuation; it is a transformation. 
+                It is a silent thief that steals the moisture from the fields before the seeds can take hold, 
+                moving with a speed that outpaces the migration of the birds.
+                
+                In the year that the measurement touched the peak of **{round(peak, 2)}**, 
+                the very stones of **{loc}** seemed to remember a coolness they may never feel again. 
+                This is the truth of the **{sci['metaphor']}**: it does not ask permission to 
+                transform the physics of our home. It is a fever that does not break at night. 
+                We see it in the data points, which are the scars of a changing world, documented 
+                with cold precision yet lived with hot intensity by every living soul here.
+                """,
+                f"""
+                ### Chapter 3: The Ghost of the Mirror
+                {random.choice(ch3_v)} 
+                Folklore tells us of a mirror once held by the forest spirits—a mirror that showed the 
+                true health of the world. Today, that mirror is clouded, its surface cracked by the 
+                weight of the unseen. The trough of **{round(trough, 2)}** is now a ghost—a remnant 
+                of a more stable, cooler past that is receding into the fog of history. 
+                The children of **{loc}** listen to stories of cold winters the same way they listen 
+                to fables of dragons; for them, the world of the trough is a legend they cannot touch.
+                
+                The measurement stands today at **{round(val_end, 2)}**, far from the reflection we once knew. 
+                In **{loc}**, the activists know that the decimal points are only the skeleton of the truth. 
+                The 'Wiggle Room' between the data and our lives is where the narrative lives—where the 
+                rising value of {sci['unit']} meets the enduring spirit of a people. 
+                It is in this space that we find the courage to name the change, and in naming it, 
+                we begin to reclaim our relationship with the land.
+                """,
+                f"""
+                ### Chapter 4: The Convergence of Tides
+                As we stand at the end of this record in **{selected_range[1]}**, the story of 
+                **{loc}** is far from over. The rising lines on our Evidence Panel are the map of 
+                a new territory, one where scientific truth and local song must converge. 
+                The data points are the milestones of our journey, but the folklore is the map 
+                that helps us find our way home through the changing tides.
+                
+                To save the land, we must understand both. The narrative of the **{sci['label']}** 
+                is a struggle written in the language of units, but told with the heart 
+                of a people who refuse to let their home be defined by an anomaly. We are the 
+                authors of the next chapter, drafting the song of our survival. The tides are 
+                rising, but our voices are rising with them in **{loc}**.
+                """
             ]
             
             for chap in story_chapters:
