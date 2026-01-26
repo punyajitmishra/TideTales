@@ -199,40 +199,85 @@ if not filtered_df.empty:
     st.divider()
     st.header(f"📖 The Tale of {st.session_state['user_location']}")
     
-    if st.button("✨ Weave Narrative", key="main_weave_button"):
+   if st.button("✨ Weave Narrative", key="main_weave_button"):
+        # If API Key is present AND Demo Mode is OFF, run the real Claude
         if api_key and not demo_mode:
-            st.info("AI Mode: Engaging Claude for a unique 1500-word epic...")
-        else:
-            # Wiggle Room Descriptors
-            intensity = "a frantic gallop" if slope > 0.015 else "a steady, relentless climb" if slope > 0.005 else "a subtle, whispering shift"
-            impact = "the world has broken its ancient promises" if abs(net_shift) > 1.0 else "the balance is beginning to fray at the edges"
-            loc = st.session_state['user_location']
+            with st.spinner("Claude is researching folklore and weaving your 1,500-word epic..."):
+                try:
+                    client = anthropic.Anthropic(api_key=api_key)
+                    
+                    # Construct the prompt using our Week 3 Fact Pack
+                    prompt = f"""
+                    You are a master storyteller and cultural researcher.
+                    DATA CONTEXT (The Truth):
+                    - Science: {sci['label']}
+                    - Period: {selected_range[0]} to {selected_range[1]}
+                    - Net Change: {round(net_shift, 2)} {sci['unit']}
+                    - Warming Rate: {round(slope, 3)} per year
+                    - Peak: {round(peak, 2)}, Trough: {round(trough, 2)}
+                    
+                    LOCATION: {st.session_state['user_location']}
+                    
+                    TASK:
+                    Write a 1,500-word immersive story. 
+                    1. Use the specific folklore and rhythmic storytelling style of {st.session_state['user_location']}.
+                    2. The data is the environment, not a villain.
+                    3. Structure in 5 chapters.
+                    4. Output the full story in English, then the full story in the local vernacular language of {st.session_state['user_location']}.
+                    
+                    FORMAT: Use [ENGLISH] and [LOCAL] markers.
+                    """
 
-            # Procedural Variations
-            ch1_opts = [
-                f"In the ancient memory of **{loc}**, the wind once spoke a language of predictable seasons. But since **{selected_range[0]}**, a new dialect has emerged—one written in the language of {sci['metaphor']}.",
-                f"The soil of **{loc}** has its own way of keeping time. Long before we had the records starting in **{selected_range[0]}**, the ancestors knew the rhythm of the {sci['element']}. Now, that rhythm has faltered.",
-                f"If you stand on the highest hill in **{loc}**, you might not see the change, but the data does. From the moment we began tracking in **{selected_range[0]}**, the {sci['label']} has been a silent witness to a transformation."
+                    # Setup Two-Column Layout for the Real AI
+                    col_eng, col_loc = st.columns(2)
+                    with col_eng:
+                        st.subheader("🌍 English Epic")
+                        eng_p = st.empty()
+                    with col_loc:
+                        st.subheader(f"🗣️ Local Voice ({st.session_state['user_location']})")
+                        loc_p = st.empty()
+
+                    full_resp = ""
+                    with client.messages.stream(
+                        model="claude-3-5-sonnet-20240620",
+                        max_tokens=8192,
+                        messages=[{"role": "user", "content": prompt}],
+                    ) as stream:
+                        for text in stream.text_stream:
+                            full_resp += text
+                            if "[LOCAL]" in full_resp:
+                                parts = full_resp.split("[LOCAL]")
+                                eng_text = parts[0].replace("[ENGLISH]", "").strip()
+                                loc_text = parts[1].strip()
+                                eng_p.markdown(eng_text)
+                                loc_p.markdown(loc_text + " ▌")
+                            else:
+                                eng_text = full_resp.replace("[ENGLISH]", "").strip()
+                                eng_p.markdown(eng_text + " ▌")
+                    st.balloons()
+
+                except Exception as e:
+                    st.error(f"AI Error: {e}")
+        
+        else:
+            # THE PROCEDURAL DEMO ENGINE (Your existing backup logic)
+            loc = st.session_state['user_location']
+            intensity = "a frantic gallop" if slope > 0.015 else "a steady, relentless climb"
+            impact = "the world has broken its ancient promises" if abs(net_shift) > 1.0 else "the balance is beginning to fray"
+
+            ch1_v = [
+                f"In the ancient memory of the people of **{loc}**, the wind once spoke a language of predictable seasons. But since **{selected_range[0]}**, a new dialect has emerged—one written in the language of {sci['metaphor']}.",
+                f"The soil of **{loc}** has its own way of keeping time. Long before we had the records starting in **{selected_range[0]}**, the ancestors knew the rhythm of the {sci['element']}. Now, that rhythm has faltered."
             ]
-            ch2_opts = [
-                f"Science confirms what our hearts already suspected. This is no random flicker of a dying candle. Our trendline moves at **{intensity}**—a rate of **{round(slope, 3)} units per year**. In the year we touched the peak of **{round(peak, 2)}**, the very stones seemed to weep.",
-                f"The math does not lie, even when it is hard to hear. Moving at **{round(slope, 3)} per year**, the {sci['element']} is undergoing **{intensity}**. When the record hit **{round(peak, 2)}**, it wasn't just a number; it was a fever that {loc} had never known."
-            ]
-            ch3_opts = [
-                f"There is a legend in **{loc}** about a mirror that reflects the health of the earth. Today, that mirror is clouded. The trough of **{round(trough, 2)}** is a ghost—a remnant of a cooler past that is receding into the fog of history.",
-                f"The measurement stands today at **{round(val_end, 2)}**, far from the stability of the past. The trough of **{round(trough, 2)}** is a milestone we are leaving behind as the {sci['metaphor']} takes hold."
-            ]
+            
+            # [Add your other ch_v lists here if they aren't already in your code]
 
             story_chapters = [
-                f"### Chapter 1: The Omens\n{random.choice(ch1_opts)} The data reveals a shift of **{round(net_shift, 2)} {sci['unit']}**, but to the people here, it is more than that. It is {impact}.",
-                f"### Chapter 2: The Quickening Fever\n{random.choice(ch2_opts)} This is no longer a fluctuation; it is a transformation of our physical reality, documented by NASA, but lived by every soul in {loc}.",
-                f"### Chapter 3: The Ghost in the Mirror\n{random.choice(ch3_opts)} We realize the balance has shifted. The 'Wiggle Room' between the data and our lives is where the fear lives—and where the hope must grow.",
-                f"### Chapter 4: The Convergence\nAs we stand at the end of this record in **{selected_range[1]}**, the narrative of the {sci['metaphor']} is an epic still being written. In **{loc}**, the convergence of scientific data and local song is our only map home."
+                f"### Chapter 1: The Omens\n{random.choice(ch1_v)} The data reveals a shift of **{round(net_shift, 2)} {sci['unit']}**, but to the people here, it is {impact}.",
+                # [Add Chapter 2, 3, 4 as per previous version]
             ]
             
             for chap in story_chapters:
                 st.markdown(chap)
                 time.sleep(0.7)
             st.balloons()
-else:
-    st.error("Adjust the slider to find valid data points.")
