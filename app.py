@@ -199,7 +199,7 @@ if not filtered_df.empty:
     st.divider()
     st.header(f"📖 The Tale of {st.session_state['user_location']}")
     
-   if st.button("✨ Weave Narrative", key="main_weave_button"):
+    if st.button("✨ Weave Narrative", key="main_weave_button"):
         # If API Key is present AND Demo Mode is OFF, run the real Claude
         if api_key and not demo_mode:
             with st.spinner("Claude is researching folklore and weaving your 1,500-word epic..."):
