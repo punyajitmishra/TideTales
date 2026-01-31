@@ -269,6 +269,14 @@ if not filtered_df.empty:
                 f"In the ancient memory of the people of **{loc}**, the wind once spoke a language of predictable seasons. But since **{selected_range[0]}**, a new dialect has emerged—one written in the language of {sci['metaphor']}.",
                 f"The soil of **{loc}** has its own way of keeping time. Long before we had the records starting in **{selected_range[0]}**, the ancestors knew the rhythm of the {sci['element']}. Now, that rhythm has faltered."
             ]
+            ch2_v = [
+                f"Science confirms what our hearts suspected. Our trendline moves at {intensity} ({round(slope, 3)} units/yr). In the year of the peak (**{round(peak, 2)}**), the very stones of {loc} seemed to weep.",
+                f"The math does not lie. Moving at **{round(slope, 3)} per year**, the {sci['element']} is undergoing {intensity}."
+            ]
+            ch3_v = [
+                f"There is a legend in **{loc}** about a mirror of spirits. Today, that mirror is clouded. The trough of **{round(trough, 2)}** is a ghost of a cooler past.",
+                f"The measurement stands today at **{round(val_end, 2)}**. The trough of **{round(trough, 2)}** is a milestone we are leaving behind."
+            ]
             
             # [Add your other ch_v lists here if they aren't already in your code]
 
