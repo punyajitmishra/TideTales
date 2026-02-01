@@ -126,65 +126,70 @@ with st.sidebar:
     source_choice = st.radio("Select Data Source", ["NASA GISTEMP (Global)", "Upload My Own CSV"], key="side_src")
     
     user_file = None
-    if source_choice == "Upload My Own CSV":
-        user_file = st.file_uploader("Upload CSV", type="csv", key="side_uploader")
+    if source_choice == "Upload My Own CSV" and user_file:
+        try:
+            # 1. Load the data
+            raw_df = pd.read_csv(user_file, na_values=["***", "NaN", " "])
+            
+            # 2. Identify columns (using your existing ai_sniff_columns)
+            y_name, d_name = ai_sniff_columns(raw_df, api_key)
+            
+            if y_name in raw_df.columns and d_name in raw_df.columns:
+                # 3. Clean and Cast types explicitly
+                processed = raw_df[[y_name, d_name]].copy()
+                processed.columns = ['year', 'anomaly']
+                
+                # Ensure numbers are actual numbers
+                processed['year'] = pd.to_numeric(processed['year'], errors='coerce')
+                processed['anomaly'] = pd.to_numeric(processed['anomaly'], errors='coerce')
+                
+                # 4. CRITICAL: Sort by year and drop NaNs
+                processed = processed.dropna().sort_values(by='year')
+                
+                # 5. Store in session state
+                st.session_state['active_df'] = processed
+                st.success(f"Successfully mapped {y_name} to Year and {d_name} to Data.")
+                
+        except Exception as e:
+            st.error(f"Error processing CSV: {e}")
     
     demo_mode = st.toggle("Enable Demo Narrative Mode", value=True, key="side_demo_toggle")
 
 # --- 6. DATA PROCESSING ---
-# --- 6. DATA PROCESSING (REFACTORED) ---
-
-# Track the current source to detect changes
-if 'current_source' not in st.session_state:
-    st.session_state['current_source'] = source_choice
-
-# If the source changes, clear the active_df so it reloads
-if st.session_state['current_source'] != source_choice:
-    st.session_state['current_source'] = source_choice
-    if source_choice == "NASA GISTEMP (Global)":
-        st.session_state['active_df'] = fetch_nasa_gistemp()
-    else:
-        st.session_state['active_df'] = None # Wait for upload
-
-# Logic for CSV Upload
-if source_choice == "Upload My Own CSV":
-    if user_file is not None:
-        # Use a secondary session state to see if we've already processed this specific file
-        if st.session_state.get('last_uploaded_file') != user_file.name:
-            try:
-                peek = pd.read_csv(user_file, nrows=2)
-                user_file.seek(0)
-                skip = 1 if "Land-Ocean" in str(peek.columns[0]) else 0
-                raw_df = pd.read_csv(user_file, skiprows=skip, na_values="***")
-                
-                # Auto-sniff columns immediately or on button
-                y_name, d_name = ai_sniff_columns(raw_df, api_key)
-                
-                if y_name in raw_df.columns and d_name in raw_df.columns:
-                    processed = raw_df[[y_name, d_name]].copy()
-                    processed.columns = ['year', 'anomaly']
-                    processed['year'] = pd.to_numeric(processed['year'], errors='coerce')
-                    processed['anomaly'] = pd.to_numeric(processed['anomaly'], errors='coerce')
-                    
-                    # Store in session state permanently
-                    st.session_state['active_df'] = processed.dropna()
-                    st.session_state['last_uploaded_file'] = user_file.name
-                    st.success(f"Loaded: {y_name} & {d_name}")
-            except Exception as e:
-                st.error(f"Load Error: {e}")
-    else:
-        st.info("Please upload a CSV file to begin.")
-
-# Fallback/Initialization for NASA
-if st.session_state.get('active_df') is None and source_choice == "NASA GISTEMP (Global)":
+if 'active_df' not in st.session_state:
     st.session_state['active_df'] = fetch_nasa_gistemp()
 
-# Assign data for the rest of the app
-if st.session_state.get('active_df') is not None:
-    data = st.session_state['active_df'].copy()
-else:
-    st.warning("No data available to plot.")
-    st.stop() # Prevents errors in the math section
+# --- 6. DATA PROCESSING (WITH BASELINE SHIFT) ---
+if source_choice == "Upload My Own CSV" and user_file:
+    try:
+        # Load with specific NASA null values
+        raw_df = pd.read_csv(user_file, skiprows=1, na_values=["***", "****", "*******"])
+        
+        # Identify columns
+        y_name, d_name = ai_sniff_columns(raw_df, api_key)
+        
+        if y_name in raw_df.columns and d_name in raw_df.columns:
+            processed = raw_df[[y_name, d_name]].copy()
+            processed.columns = ['year', 'anomaly']
+            
+            # Force numeric and drop empty rows
+            processed['year'] = pd.to_numeric(processed['year'], errors='coerce')
+            processed['anomaly'] = pd.to_numeric(processed['anomaly'], errors='coerce')
+            processed = processed.dropna().sort_values('year')
+
+            # --- CALCULATE BASELINE SHIFT (2007-2016) ---
+            baseline_mask = (processed['year'] >= 2007) & (processed['year'] <= 2016)
+            baseline_avg = processed.loc[baseline_mask, 'anomaly'].mean()
+            
+            # Apply the shift: New Value = Old Value - Baseline Average
+            processed['anomaly'] = processed['anomaly'] - baseline_avg
+            
+            st.session_state['active_df'] = processed
+            st.success(f"Baseline shifted relative to 2007-2016 average ({round(baseline_avg, 3)}°C)")
+    except Exception as e:
+        st.error(f"Error: {e}")
+
+data = st.session_state['active_df'].copy()
 
 # --- 7. MAIN DASHBOARD ---
 st.title("🌊 Tide Tales")
@@ -209,12 +214,24 @@ if not filtered_df.empty:
 
     # EVIDENCE PANEL
     st.header(f"📊 Evidence: {sci['label']}")
-    fig = px.line(filtered_df, x='year', y='anomaly', template="plotly_dark", 
-                  title=f"The Scientific Truth in {st.session_state['user_location']}")
-    fig.add_scatter(x=filtered_df['year'], y=slope*filtered_df['year'] + intercept, name="Trend", line=dict(color='red', dash='dot'))
-    fig.update_traces(line_color=sci['color'], line_width=3)
-    st.plotly_chart(fig, use_container_width=True)
+    # Create the base line chart for the actual data
+    fig = px.line(
+        filtered_df, 
+        x='year', 
+        y='anomaly', 
+        markers=True,  # Add markers so you can see individual data points
+        template="plotly_dark",
+        title=f"The Scientific Truth in {st.session_state['user_location']}"
+    )
 
+    # Add the trend line as a separate layer
+    fig.add_scatter(
+        x=filtered_df['year'], 
+        y=slope * filtered_df['year'] + intercept, 
+        name="Trend", 
+        mode='lines',
+        line=dict(color='red', dash='dot')
+    )
     # METRICS
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Net Shift", f"{round(net_shift, 2)} {sci['unit']}")
@@ -295,14 +312,6 @@ if not filtered_df.empty:
             ch1_v = [
                 f"In the ancient memory of the people of **{loc}**, the wind once spoke a language of predictable seasons. But since **{selected_range[0]}**, a new dialect has emerged—one written in the language of {sci['metaphor']}.",
                 f"The soil of **{loc}** has its own way of keeping time. Long before we had the records starting in **{selected_range[0]}**, the ancestors knew the rhythm of the {sci['element']}. Now, that rhythm has faltered."
-            ]
-            ch2_v = [
-                f"Science confirms what our hearts suspected. Our trendline moves at {intensity} ({round(slope, 3)} units/yr). In the year of the peak (**{round(peak, 2)}**), the very stones of {loc} seemed to weep.",
-                f"The math does not lie. Moving at **{round(slope, 3)} per year**, the {sci['element']} is undergoing {intensity}."
-            ]
-            ch3_v = [
-                f"There is a legend in **{loc}** about a mirror of spirits. Today, that mirror is clouded. The trough of **{round(trough, 2)}** is a ghost of a cooler past.",
-                f"The measurement stands today at **{round(val_end, 2)}**. The trough of **{round(trough, 2)}** is a milestone we are leaving behind."
             ]
             
             # [Add your other ch_v lists here if they aren't already in your code]
