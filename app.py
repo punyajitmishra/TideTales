@@ -132,32 +132,59 @@ with st.sidebar:
     demo_mode = st.toggle("Enable Demo Narrative Mode", value=True, key="side_demo_toggle")
 
 # --- 6. DATA PROCESSING ---
-if 'active_df' not in st.session_state:
-    st.session_state['active_df'] = fetch_nasa_gistemp()
+# --- 6. DATA PROCESSING (REFACTORED) ---
 
-if source_choice == "Upload My Own CSV" and user_file:
-    try:
-        peek = pd.read_csv(user_file, nrows=2)
-        user_file.seek(0)
-        skip = 1 if "Land-Ocean" in str(peek.columns[0]) else 0
-        raw_df = pd.read_csv(user_file, skiprows=skip, na_values="***")
-        
-        if st.button("🔍 Analyze Structure", key="side_analyze_btn"):
-            with st.spinner("AI is sniffing the columns..."):
+# Track the current source to detect changes
+if 'current_source' not in st.session_state:
+    st.session_state['current_source'] = source_choice
+
+# If the source changes, clear the active_df so it reloads
+if st.session_state['current_source'] != source_choice:
+    st.session_state['current_source'] = source_choice
+    if source_choice == "NASA GISTEMP (Global)":
+        st.session_state['active_df'] = fetch_nasa_gistemp()
+    else:
+        st.session_state['active_df'] = None # Wait for upload
+
+# Logic for CSV Upload
+if source_choice == "Upload My Own CSV":
+    if user_file is not None:
+        # Use a secondary session state to see if we've already processed this specific file
+        if st.session_state.get('last_uploaded_file') != user_file.name:
+            try:
+                peek = pd.read_csv(user_file, nrows=2)
+                user_file.seek(0)
+                skip = 1 if "Land-Ocean" in str(peek.columns[0]) else 0
+                raw_df = pd.read_csv(user_file, skiprows=skip, na_values="***")
+                
+                # Auto-sniff columns immediately or on button
                 y_name, d_name = ai_sniff_columns(raw_df, api_key)
+                
                 if y_name in raw_df.columns and d_name in raw_df.columns:
-                    st.success(f"Mapping: {y_name} & {d_name}")
                     processed = raw_df[[y_name, d_name]].copy()
                     processed.columns = ['year', 'anomaly']
                     processed['year'] = pd.to_numeric(processed['year'], errors='coerce')
                     processed['anomaly'] = pd.to_numeric(processed['anomaly'], errors='coerce')
+                    
+                    # Store in session state permanently
                     st.session_state['active_df'] = processed.dropna()
-    except Exception as e:
-        st.error(f"Load Error: {e}")
-elif source_choice == "NASA GISTEMP (Global)":
+                    st.session_state['last_uploaded_file'] = user_file.name
+                    st.success(f"Loaded: {y_name} & {d_name}")
+            except Exception as e:
+                st.error(f"Load Error: {e}")
+    else:
+        st.info("Please upload a CSV file to begin.")
+
+# Fallback/Initialization for NASA
+if st.session_state.get('active_df') is None and source_choice == "NASA GISTEMP (Global)":
     st.session_state['active_df'] = fetch_nasa_gistemp()
 
-data = st.session_state['active_df'].copy()
+# Assign data for the rest of the app
+if st.session_state.get('active_df') is not None:
+    data = st.session_state['active_df'].copy()
+else:
+    st.warning("No data available to plot.")
+    st.stop() # Prevents errors in the math section
 
 # --- 7. MAIN DASHBOARD ---
 st.title("🌊 Tide Tales")
