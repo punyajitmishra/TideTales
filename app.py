@@ -6,146 +6,178 @@ import anthropic
 import requests
 import time
 
-# --- 1. SETTINGS ---
+# --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Tide Tales", layout="wide", page_icon="🌊")
 
-if 'user_location' not in st.session_state: st.session_state['user_location'] = "Bhubaneswar, India"
-if 'data_mapped' not in st.session_state: st.session_state['data_mapped'] = None
-if 'metadata' not in st.session_state: st.session_state['metadata'] = None
+# Initialize persistent memory
+if 'user_location' not in st.session_state:
+    st.session_state['user_location'] = "Bhubaneswar, India"
+if 'data_mapped' not in st.session_state:
+    st.session_state['data_mapped'] = None
+if 'sci_metadata' not in st.session_state:
+    st.session_state['sci_metadata'] = None
 
-# --- 2. THE AI DATA INTERPRETER (The "Sniffer") ---
-def interpret_file_structure(df, api_key):
-    """Sends file sample to AI to return mapping and science context."""
-    if not api_key:
-        # Fallback for testing/demo
-        return {"year": df.columns[0], "data": df.columns[1], "type": "Climate Data", "unit": "Units"}
-
-    client = anthropic.Anthropic(api_key=api_key)
-    sample = df.head(10).to_string()
-    
-    prompt = f"""
-    Analyze this CSV sample and identify the structure for a climate dashboard.
-    SAMPLE:
-    {sample}
-
-    TASK:
-    1. Identify the 'Time/Year' column name.
-    2. Identify the 'Primary Measurement' column name.
-    3. Identify the Science Type (e.g. Temperature, AQI, Sea Level) and the Unit.
-
-    RETURN ONLY THIS JSON FORMAT:
-    {{
-        "year": "column_name",
-        "data": "column_name",
-        "type": "Science Type",
-        "unit": "Measurement Unit"
-    }}
-    """
-    
-    try:
-        response = client.messages.create(model="claude-3-5-sonnet-20240620", max_tokens=150, messages=[{"role": "user", "content": prompt}])
-        return eval(response.content[0].text) # Simple parsing for JSON
-    except:
-        return {"year": df.columns[0], "data": df.columns[1], "type": "Climate", "unit": "Units"}
-
-# --- 3. SIDEBAR ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
-    st.title("🌊 Tide Tales")
-    api_key = st.text_input("Anthropic API Key", type="password")
-    st.session_state['user_location'] = st.text_input("📍 Your Location", value=st.session_state['user_location'])
+    st.title("🌊 Tide Tales Settings")
+    api_key = st.text_input("Anthropic API Key", type="password", key="api_key")
+    
+    # Manual location override to ensure accuracy
+    st.session_state['user_location'] = st.text_input(
+        "📍 Location Context", 
+        value=st.session_state['user_location'], 
+        key="loc_input"
+    )
+    
     st.divider()
     uploaded_file = st.file_uploader("Step 1: Upload Scientific CSV", type="csv")
+    st.info("The AI will automatically identify the science type and columns upon analysis.")
 
-# --- 4. MAIN DASHBOARD ---
+# --- 3. THE AI DATA INTERPRETER (The "Sniffer") ---
+def ai_interpret_data(df, api_key):
+    """AI scans the file snippet to define the 'physics' of the dashboard."""
+    client = anthropic.Anthropic(api_key=api_key)
+    sample = df.head(10).to_string()
+    headers = df.columns.tolist()
+    
+    prompt = f"""
+    Analyze this dataset sample and identify its purpose for a climate dashboard.
+    SAMPLE DATA:
+    {sample}
+    
+    HEADERS: {headers}
+    
+    IDENTIFY:
+    1. Which column is the Time (Year or Date)?
+    2. Which column is the primary Measurement (Value/Anomaly)?
+    3. What is the unit (e.g., °C, ppm, mm, AQI Index)?
+    4. What is the Science Label (e.g., Air Quality, Sea Level Rise, Global Warming)?
+    
+    RETURN ONLY IN THIS FORMAT:
+    YearCol: [name]
+    DataCol: [name]
+    Unit: [unit]
+    Label: [label]
+    """
+    
+    response = client.messages.create(
+        model="claude-3-5-sonnet-20240620",
+        max_tokens=200,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    res = response.content[0].text
+    
+    # Parsing the AI's response into a dictionary
+    mapping = {}
+    for line in res.strip().split('\n'):
+        if ':' in line:
+            key, val = line.split(':', 1)
+            mapping[key.strip()] = val.strip()
+    return mapping
+
+# --- 4. MAIN INTERFACE LOGIC ---
 st.title("🌊 Tide Tales")
 
 if uploaded_file:
+    # Use pandas to read any standard CSV
     raw_df = pd.read_csv(uploaded_file, na_values="***")
     
-    # Automatically interpret if not already done
-    if st.session_state['metadata'] is None or st.button("🔄 Re-Analyze File"):
-        with st.spinner("AI is reading and interpreting your file..."):
-            meta = interpret_file_structure(raw_df, api_key)
-            st.session_state['metadata'] = meta
-            
-            # Map the dataframe based on AI's findings
-            clean_df = raw_df[[meta['year'], meta['data']]].copy()
-            clean_df.columns = ['year', 'val']
-            clean_df['year'] = pd.to_numeric(clean_df['year'], errors='coerce')
-            clean_df['val'] = pd.to_numeric(clean_df['val'], errors='coerce')
-            st.session_state['data_mapped'] = clean_df.dropna()
+    # Analyze button triggers the AI "Sniffer"
+    if st.button("🔍 AI: Interpret Data Structure"):
+        if not api_key:
+            st.error("Please enter an API Key in the sidebar.")
+        else:
+            with st.spinner("AI is analyzing file structure and science type..."):
+                try:
+                    mapping = ai_interpret_data(raw_df, api_key)
+                    
+                    # Create the standardized dataframe for the plotter
+                    y_col, d_col = mapping['YearCol'], mapping['DataCol']
+                    clean_df = raw_df[[y_col, d_col]].copy()
+                    clean_df.columns = ['year', 'val']
+                    clean_df['year'] = pd.to_numeric(clean_df['year'], errors='coerce')
+                    clean_df['val'] = pd.to_numeric(clean_df['val'], errors='coerce')
+                    
+                    st.session_state['data_mapped'] = clean_df.dropna()
+                    st.session_state['sci_metadata'] = mapping
+                    st.success(f"AI identified this as {mapping['Label']} data.")
+                except Exception as e:
+                    st.error(f"Mapping failed: {e}")
 
+# --- 5. NUMPY PLOTTER & DASHBOARD ---
 if st.session_state['data_mapped'] is not None:
     data = st.session_state['data_mapped']
-    meta = st.session_state['metadata']
+    meta = st.session_state['sci_metadata']
     
-    # --- NUMPY PLOTTER ---
+    # 5a. Time range selection
     min_y, max_y = int(data['year'].min()), int(data['year'].max())
-    rng = st.slider("Select Time Range", min_y, max_y, (min_y, max_y), key="time_slider")
-    f_df = data[(data['year'] >= rng[0]) & (data['year'] <= rng[1])]
-    
-    # Math trend
+    selected_range = st.slider("Select Time Range", min_y, max_y, (min_y, max_y))
+    f_df = data[(data['year'] >= selected_range[0]) & (data['year'] <= selected_range[1])]
+
+    # 5b. NUMPY MATH (The Fact Pack)
     slope, intercept = np.polyfit(f_df['year'], f_df['val'], 1)
+    net_change = f_df['val'].iloc[-1] - f_df['val'].iloc[0]
     
-    # Plotting using the AI-detected Labels
-    st.header(f"📊 Evidence: {meta['type']}")
+    # 5c. DYNAMIC PLOTTING
+    st.header(f"📊 Evidence: {meta['Label']}")
     fig = px.line(f_df, x='year', y='val', template="plotly_dark", 
-                  labels={'year': 'Year', 'val': meta['unit']},
-                  title=f"Trend of {meta['type']} in {st.session_state['user_location']}")
+                  labels={'year': 'Year', 'val': meta['Unit']},
+                  title=f"Observing {meta['Label']} in {st.session_state['user_location']}")
     
+    # Adding the red dotted Trendline via Numpy
     fig.add_scatter(x=f_df['year'], y=slope*f_df['year'] + intercept, 
-                    name="Mathematical Trendline", line=dict(color='red', dash='dot'))
+                    name="Mathematical Trend", line=dict(color='red', dash='dot'))
     st.plotly_chart(fig, use_container_width=True)
 
-    # Metrics
+    # Display Metrics
     c1, c2, c3 = st.columns(3)
-    net = f_df['val'].iloc[-1] - f_df['val'].iloc[0]
-    c1.metric("Net Change", f"{round(net, 2)} {meta['unit']}")
-    c2.metric("Trend Slope", f"{round(slope, 4)} / yr")
-    c3.metric("Peak Value", round(f_df['val'].max(), 2))
+    c1.metric("Net Shift", f"{round(net_change, 2)} {meta['Unit']}")
+    c2.metric("Trend Rate", f"{round(slope, 4)} / yr")
+    c3.metric("Peak Record", round(f_df['val'].max(), 2))
 
-    # --- 5. THE CREATIVE STORYTELLER ---
+    # --- 6. AI STORY WRITER (NO SCAFFOLD - FULL CREATIVITY) ---
     st.divider()
-    if st.button("✨ Weave 1500-Word Narrative", key="weave_btn"):
+    if st.button("✨ Weave 1500-Word Narrative"):
         if not api_key:
-            # DEMO FALLBACK
-            st.info("Demo Mode: Generating a poetic summary...")
-            st.write(f"In {st.session_state['user_location']}, the {meta['type']} is shifting at a pace of {round(slope, 4)}...")
+            st.error("API Key required.")
         else:
-            client = anthropic.Anthropic(api_key=api_key)
-            
-            # THE "WIGGLE ROOM" PROMPT
+            # The "Wiggle Room" Prompt - No chapters, total narrative freedom
             prompt = f"""
-            Identify as a Cultural Data Sentinel. 
-            Write an immersive 1,500-word story for the people of {st.session_state['user_location']}.
-            
-            THE DATA CONTEXT:
-            - Science: {meta['type']}
-            - Net Change: {round(net, 2)} {meta['unit']}
-            - Trend Speed: {round(slope, 4)} per year
-            
-            TASK:
-            1. Use the local folklore and traditional myths of {st.session_state['user_location']} as the narrative soil.
-            2. The scientific data is the "Atmosphere" or "Environment" of the story. It is the inescapable physical truth.
-            3. You have full creative freedom. Do not use a fixed scaffold or chapters. 
-            4. Integrate the numbers naturally into the prose (e.g. "the fever of 1.2 degrees" or "the 4mm rise of the hungry tides").
-            5. Output: FULL story in English, followed by FULL story in the local vernacular of {st.session_state['user_location']}.
-            
-            FORMAT: [ENGLISH] ... [LOCAL]
-            """
+            Identify as a Cultural Data Sentinel and a master literary novelist.
+            LOCATION: {st.session_state['user_location']}
+            DATA: {meta['Label']} change in {meta['Unit']}. 
+            TIMEFRAME: {selected_range[0]} to {selected_range[1]}.
+            FACTS: Net change of {round(net_change, 2)}. Trend rate of {round(slope, 4)} per year.
 
+            TASK:
+            Write a 1,500-word immersive story grounded in this data. 
+            1. FULL CREATIVE FREEDOM: Do not use a fixed scaffold or chaptered structure. 
+            2. NARRATIVE PHYSICS: The scientific data is the inescapable atmosphere of the world. Integrate the numbers (e.g., the trend rate, the peak) naturally into the prose as metaphors or physical realities.
+            3. CULTURE: Use the folklore, local myths, and specific storytelling metaphors of {st.session_state['user_location']}.
+            4. INTEGRITY: The data is the truth, not the villain.
+            
+            FORMAT: Write the FULL story in English, then the FULL story in the local vernacular of {st.session_state['user_location']}. Use [ENGLISH] and [LOCAL] markers.
+            """
+            
+            client = anthropic.Anthropic(api_key=api_key)
             col_e, col_l = st.columns(2)
             e_p, l_p = col_e.empty(), col_l.empty()
             full_resp = ""
             
-            with client.messages.stream(model="claude-3-5-sonnet-20240620", max_tokens=8192, messages=[{"role": "user", "content": prompt}]) as stream:
+            with client.messages.stream(
+                model="claude-3-5-sonnet-20240620",
+                max_tokens=8192,
+                messages=[{"role": "user", "content": prompt}]
+            ) as stream:
                 for text in stream.text_stream:
                     full_resp += text
                     if "[LOCAL]" in full_resp:
                         parts = full_resp.split("[LOCAL]")
-                        eng_text = parts[0].replace("[ENGLISH]", "").strip()
-                        loc_text = parts[1].strip()
-                        e_p.markdown(eng_text); l_p.markdown(loc_text + " ▌")
+                        e_text = parts[0].replace("[ENGLISH]", "").strip()
+                        l_text = parts[1].strip()
+                        e_p.markdown(e_text); l_p.markdown(l_text + " ▌")
                     else:
                         e_p.markdown(full_resp.replace("[ENGLISH]", "").strip() + " ▌")
             st.balloons()
+else:
+    st.info("👈 Please upload a scientific CSV file and click 'Interpret' to begin.")
