@@ -289,15 +289,44 @@ FACTS:
 """
 
 
-def build_ai_story(facts: dict, tone: str, length: str, language: str, api_key: str) -> str:
-    vernacular = language.strip().lower() not in ("english", "")
+def _infer_vernacular(location: str, client) -> str | None:
+    """
+    Ask Claude what the dominant non-English regional language is for a location.
+    Returns the language name (e.g. "Odia", "Hindi", "Tamil") or None if English
+    is the primary language or no clear regional language can be identified.
+    """
+    try:
+        response = client.messages.create(
+            model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+            max_tokens=20,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"What is the dominant non-English regional language spoken in '{location}'? "
+                    "Reply with just the language name (e.g. 'Odia', 'Tamil', 'Bengali'). "
+                    "If English is the primary language there, or you cannot identify a clear "
+                    "regional language, reply with exactly: none"
+                ),
+            }],
+        )
+        result = response.content[0].text.strip().lower()
+        if result == "none" or not result:
+            return None
+        return result.capitalize()
+    except Exception as e:
+        print(f"CLAUDE VERNACULAR INFERENCE ERROR: {e}")
+        return None
 
+
+def build_ai_story(facts: dict, tone: str, length: str, api_key: str) -> str:
     if not api_key or anthropic is None:
-        fallback = build_fallback_story(facts, tone, length)
-        return fallback  # fallback is English-only; no vernacular without Claude
+        return build_fallback_story(facts, tone, length)
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
+
+        # Infer vernacular from the location string
+        vernacular = _infer_vernacular(facts["location"], client)
 
         # Always generate the English story
         english_story = _call_claude(client, _build_prompt(facts, tone, length, "English"), length)
@@ -306,7 +335,7 @@ def build_ai_story(facts: dict, tone: str, length: str, language: str, api_key: 
             return english_story
 
         # Generate the vernacular story as a separate Claude call
-        vernacular_story = _call_claude(client, _build_prompt(facts, tone, length, language), length)
+        vernacular_story = _call_claude(client, _build_prompt(facts, tone, length, vernacular), length)
 
         return english_story + STORY_DELIMITER + vernacular_story
 
@@ -390,8 +419,6 @@ def analyze():
             facts,
             payload.get("tone") or "Balanced",
             payload.get("length") or "Short",
-            # FIX 1: Pass language from frontend payload
-            payload.get("language") or "English",
             os.environ.get("ANTHROPIC_API_KEY", ""),
         )
         run_id = save_run(facts, story)
