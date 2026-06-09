@@ -388,8 +388,7 @@ def history():
         ).fetchall()
     return jsonify([dict(row) for row in rows])
 
-
+init_db()
+ensure_fallback_data()
 if __name__ == "__main__":
-    init_db()
-    ensure_fallback_data()
     app.run(debug=True, port=5001)
