@@ -245,12 +245,19 @@ def build_fallback_story(facts: dict, tone: str, length: str) -> str:
     return "\n\n".join(paragraphs)
 
 
-# FIX 1: Added `language` parameter
-def build_ai_story(facts: dict, tone: str, length: str, language: str, api_key: str) -> str:
-    if not api_key or anthropic is None:
-        return build_fallback_story(facts, tone, length)
+STORY_DELIMITER = "\n\n---VERNACULAR---\n\n"
 
-    # FIX 2: Explicit word-count targets and completion instructions
+
+def _call_claude(client, prompt: str, length: str) -> str:
+    response = client.messages.create(
+        model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+        max_tokens=3000 if length == "Long" else 1000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text.strip()
+
+
+def _build_prompt(facts: dict, tone: str, length: str, language: str) -> str:
     length_instructions = (
         "- Write 300 to 500 words.\n"
         "- Use flowing prose, no section headings."
@@ -260,19 +267,7 @@ def build_ai_story(facts: dict, tone: str, length: str, language: str, api_key: 
         "- Build a clear narrative arc: opening, development, significance, conclusion.\n"
         "- Explain what the trends mean for people living in this location."
     )
-
-    # FIX 3: Language instructions
-    language_instructions = (
-        ""
-        if language.strip().lower() in ("english", "")
-        else (
-            f"- Write entirely in {language}.\n"
-            "- Use natural, native-level prose — do not translate English sentence structures literally.\n"
-            "- Preserve all numbers, dataset names, and source citations as-is."
-        )
-    )
-
-    prompt = f"""Write a grounded climate data narrative for a public audience.
+    return f"""Write a grounded climate data narrative for a public audience.
 
 Rules:
 - Use only the facts provided in the JSON below.
@@ -281,29 +276,41 @@ Rules:
 - Keep it vivid and verifiable.
 - Finish the narrative completely. Never stop mid-sentence or mid-section.
 - End with a clear concluding paragraph.
+- Write entirely in {language}.
+- Use natural, native-level prose — do not translate English sentence structures literally.
+- Preserve all numbers, dataset names, and source citations as-is.
 - Tone: {tone}
 
 Length:
 {length_instructions}
 
-Language:
-{language_instructions if language_instructions else "- Write in English."}
-
 FACTS:
 {json.dumps({k: v for k, v in facts.items() if k not in ["series", "trend"]}, indent=2)}
 """
 
+
+def build_ai_story(facts: dict, tone: str, length: str, language: str, api_key: str) -> str:
+    vernacular = language.strip().lower() not in ("english", "")
+
+    if not api_key or anthropic is None:
+        fallback = build_fallback_story(facts, tone, length)
+        return fallback  # fallback is English-only; no vernacular without Claude
+
     try:
         client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-            # FIX 4: Increased token limits so long stories don't get cut off
-            max_tokens=3000 if length == "Long" else 1000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text.strip()
+
+        # Always generate the English story
+        english_story = _call_claude(client, _build_prompt(facts, tone, length, "English"), length)
+
+        if not vernacular:
+            return english_story
+
+        # Generate the vernacular story as a separate Claude call
+        vernacular_story = _call_claude(client, _build_prompt(facts, tone, length, language), length)
+
+        return english_story + STORY_DELIMITER + vernacular_story
+
     except Exception as e:
-        # FIX 5: Log Claude errors instead of silently swallowing them
         print(f"CLAUDE ERROR: {e}")
         return build_fallback_story(facts, tone, length)
 
