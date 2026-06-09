@@ -245,33 +245,66 @@ def build_fallback_story(facts: dict, tone: str, length: str) -> str:
     return "\n\n".join(paragraphs)
 
 
-def build_ai_story(facts: dict, tone: str, length: str, api_key: str) -> str:
+# FIX 1: Added `language` parameter
+def build_ai_story(facts: dict, tone: str, length: str, language: str, api_key: str) -> str:
     if not api_key or anthropic is None:
         return build_fallback_story(facts, tone, length)
 
-    prompt = f"""
-Write a grounded climate data narrative for a public audience.
+    # FIX 2: Explicit word-count targets and completion instructions
+    length_instructions = (
+        "- Write 300 to 500 words.\n"
+        "- Use flowing prose, no section headings."
+        if length != "Long" else
+        "- Write 1000 to 1800 words.\n"
+        "- Use section headings to structure the narrative.\n"
+        "- Build a clear narrative arc: opening, development, significance, conclusion.\n"
+        "- Explain what the trends mean for people living in this location."
+    )
+
+    # FIX 3: Language instructions
+    language_instructions = (
+        ""
+        if language.strip().lower() in ("english", "")
+        else (
+            f"- Write entirely in {language}.\n"
+            "- Use natural, native-level prose — do not translate English sentence structures literally.\n"
+            "- Preserve all numbers, dataset names, and source citations as-is."
+        )
+    )
+
+    prompt = f"""Write a grounded climate data narrative for a public audience.
 
 Rules:
-- Use only the facts in the JSON below.
+- Use only the facts provided in the JSON below.
 - Do not invent numbers, sources, impacts, deaths, policy claims, or local folklore.
-- Mention the dataset source once.
-- Keep it concise, vivid, and verifiable.
+- Mention the dataset source exactly once.
+- Keep it vivid and verifiable.
+- Finish the narrative completely. Never stop mid-sentence or mid-section.
+- End with a clear concluding paragraph.
 - Tone: {tone}
-- Length: {length}
+
+Length:
+{length_instructions}
+
+Language:
+{language_instructions if language_instructions else "- Write in English."}
 
 FACTS:
 {json.dumps({k: v for k, v in facts.items() if k not in ["series", "trend"]}, indent=2)}
 """
+
     try:
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-            max_tokens=900 if length == "Long" else 450,
+            # FIX 4: Increased token limits so long stories don't get cut off
+            max_tokens=3000 if length == "Long" else 1000,
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text.strip()
-    except Exception:
+    except Exception as e:
+        # FIX 5: Log Claude errors instead of silently swallowing them
+        print(f"CLAUDE ERROR: {e}")
         return build_fallback_story(facts, tone, length)
 
 
@@ -350,6 +383,8 @@ def analyze():
             facts,
             payload.get("tone") or "Balanced",
             payload.get("length") or "Short",
+            # FIX 1: Pass language from frontend payload
+            payload.get("language") or "English",
             os.environ.get("ANTHROPIC_API_KEY", ""),
         )
         run_id = save_run(facts, story)
@@ -387,6 +422,7 @@ def history():
             """
         ).fetchall()
     return jsonify([dict(row) for row in rows])
+
 
 init_db()
 ensure_fallback_data()
