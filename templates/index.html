@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tide Tales — Climate Data Story Engine</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <div>
+        <div class="brand-name">Tide<em>Tales</em> <span class="brand-wave">🌊</span></div>
+        <div class="brand-sub">Data-grounded climate narratives</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="icon-btn" id="download-facts" title="Download fact pack as JSON" disabled>↓ Facts</button>
+      <button class="icon-btn" id="download-story" title="Download story as text" disabled>↓ Story</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+
+    <!-- ── Sidebar ──────────────────────────────────────────── -->
+    <aside class="sidebar">
+
+      <section class="control-block">
+        <h2>Dataset</h2>
+        <div class="segmented">
+          <button class="segment active" data-source="default">NASA</button>
+          <button class="segment"        data-source="upload">Upload CSV</button>
+        </div>
+        <form id="upload-form" class="upload-form hidden">
+          <label>CSV file</label>
+          <input type="file" id="csv-file" accept=".csv" />
+          <label>Dataset label</label>
+          <input id="dataset-label" placeholder="e.g. Bay of Bengal SST" />
+          <label>Unit</label>
+          <input id="dataset-unit" placeholder="e.g. °C, mm, ppm" />
+          <button type="submit" class="secondary-btn">Parse CSV</button>
+        </form>
+        <div class="source-card">
+          <div class="source-label" id="source-label">Loading dataset…</div>
+          <p id="source-notes"></p>
+          <a id="source-link" href="#" target="_blank" rel="noreferrer">Open source ↗</a>
+        </div>
+      </section>
+
+      <section class="control-block">
+        <h2>Frame</h2>
+        <label>Location context</label>
+        <input id="location" type="text" value="Bhubaneswar, India" />
+
+        <div class="range-row">
+          <div>
+            <label>Start</label>
+            <input id="start-year" type="number" />
+          </div>
+          <div>
+            <label>End</label>
+            <input id="end-year" type="number" />
+          </div>
+        </div>
+
+        <label>Tone</label>
+        <select id="tone">
+          <option>Balanced</option>
+          <option>Scientific</option>
+          <option>Mythic</option>
+        </select>
+
+        <label>Length</label>
+        <select id="length">
+          <option>Short</option>
+          <option>Long</option>
+        </select>
+
+        <button id="analyze-btn" class="primary-btn">✦ Weave narrative</button>
+      </section>
+
+      <section class="control-block">
+        <h2>Recent runs</h2>
+        <div id="history" class="history-list">
+          <span class="muted">No runs yet.</span>
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- ── Workspace ─────────────────────────────────────────── -->
+    <section class="workspace">
+
+      <div class="intro-band">
+        <div>
+          <p class="eyebrow">Climate communication lab</p>
+          <h1>Turn a climate time series into a story that can be audited.</h1>
+        </div>
+        <p>Tide Tales computes the numbers first, shows the evidence, then writes only from that constrained fact pack. The prose may be human; the claims stay tied to the chart.</p>
+      </div>
+
+      <section class="stat-grid" id="stat-grid">
+        <div class="stat"><span>Net shift</span><strong id="stat-shift">—</strong></div>
+        <div class="stat"><span>Trend / decade</span><strong id="stat-trend">—</strong></div>
+        <div class="stat"><span>Peak</span><strong id="stat-peak">—</strong></div>
+        <div class="stat"><span>Fit confidence</span><strong id="stat-r2">—</strong></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="section-head">
+          <div>
+            <h2 id="chart-title">Evidence panel</h2>
+            <p id="chart-subtitle">Chart and fact pack update before the story is generated.</p>
+          </div>
+          <span class="status-pill" id="status-pill">Ready</span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="climate-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="split-section">
+        <article class="story-panel">
+          <div class="section-head compact">
+            <div>
+              <h2>Narrative</h2>
+              <p>Review the fact pack, then click Weave narrative.</p>
+            </div>
+          </div>
+          <div id="story-output" class="story-output">
+            Facts load automatically. Click <em>Weave narrative</em> when you are ready.
+          </div>
+        </article>
+
+        <article class="facts-panel">
+          <div class="section-head compact">
+            <div>
+              <h2>Fact pack</h2>
+              <p>Every number the story may use.</p>
+            </div>
+          </div>
+          <dl id="facts-list" class="facts-list">
+            <dt>Status</dt><dd>Waiting for analysis.</dd>
+          </dl>
+        </article>
+      </section>
+
+    </section>
+  </main>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
