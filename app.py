@@ -318,27 +318,41 @@ def _infer_vernacular(location: str, client) -> str | None:
         return None
 
 
+import concurrent.futures
+
 def build_ai_story(facts: dict, tone: str, length: str, api_key: str) -> str:
     if not api_key or anthropic is None:
         return build_fallback_story(facts, tone, length)
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        # 1. Enforce a strict timeout on the Anthropic client (e.g., 60 seconds per call)
+        client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
 
         # Infer vernacular from the location string
         vernacular = _infer_vernacular(facts["location"], client)
 
-        # Always generate the English story
-        english_story = _call_claude(client, _build_prompt(facts, tone, length, "English"), length)
-
+        # If no vernacular, just run the English call normally
         if not vernacular:
-            return english_story
+            return _call_claude(client, _build_prompt(facts, tone, length, "English"), length)
 
-        # Generate the vernacular story as a separate Claude call
-        vernacular_story = _call_claude(client, _build_prompt(facts, tone, length, vernacular), length)
+        # 2. Parallelize the English and Vernacular calls to cut wait times in half
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            english_future = executor.submit(
+                _call_claude, client, _build_prompt(facts, tone, length, "English"), length
+            )
+            vernacular_future = executor.submit(
+                _call_claude, client, _build_prompt(facts, tone, length, vernacular), length
+            )
+
+            # Wait for both to finish and get their results
+            english_story = english_future.result()
+            vernacular_story = vernacular_future.result()
 
         return english_story + STORY_DELIMITER + vernacular_story
 
+    except anthropic.APITimeoutError:
+        print("CLAUDE TIMEOUT: The Anthropic API took too long to respond.")
+        return build_fallback_story(facts, tone, length)
     except Exception as e:
         print(f"CLAUDE ERROR: {e}")
         return build_fallback_story(facts, tone, length)
