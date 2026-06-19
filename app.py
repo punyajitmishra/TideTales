@@ -1,3 +1,4 @@
+import concurrent.futures
 import io
 import json
 import os
@@ -22,6 +23,13 @@ DATA_PATH = BASE_DIR / "data" / "gistemp_fallback.csv"
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 
+STORY_DELIMITER = "\n\n---VERNACULAR---\n\n"
+
+# Token budgets, trimmed down from the original 1000/3000.
+# Short stories target ~300-500 words (~700 tokens is plenty of headroom).
+# Long stories target ~1000-1800 words (~2400 tokens is plenty of headroom).
+MAX_TOKENS = {"Short": 700, "Long": 2400}
+VERNACULAR_INFER_MAX_TOKENS = 20
 
 DATASET_META = {
     "nasa_gistemp": {
@@ -245,13 +253,10 @@ def build_fallback_story(facts: dict, tone: str, length: str) -> str:
     return "\n\n".join(paragraphs)
 
 
-STORY_DELIMITER = "\n\n---VERNACULAR---\n\n"
-
-
 def _call_claude(client, prompt: str, length: str) -> str:
     response = client.messages.create(
         model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-        max_tokens=3000 if length == "Long" else 1000,
+        max_tokens=MAX_TOKENS.get(length, MAX_TOKENS["Short"]),
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text.strip()
@@ -262,7 +267,7 @@ def _build_prompt(facts: dict, tone: str, length: str, language: str) -> str:
         "- Write 300 to 500 words.\n"
         "- Use flowing prose, no section headings."
         if length != "Long" else
-        "- Write 1000 to 1800 words.\n"
+        "- Write 1000 to 1500 words.\n"
         "- Use section headings to structure the narrative.\n"
         "- Build a clear narrative arc: opening, development, significance, conclusion.\n"
         "- Explain what the trends mean for people living in this location."
@@ -295,10 +300,12 @@ def _infer_vernacular(location: str, client) -> str | None:
     Returns the language name (e.g. "Odia", "Hindi", "Tamil") or None if English
     is the primary language or no clear regional language can be identified.
     """
+    if not location or not location.strip():
+        return None
     try:
         response = client.messages.create(
             model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-            max_tokens=20,
+            max_tokens=VERNACULAR_INFER_MAX_TOKENS,
             messages=[{
                 "role": "user",
                 "content": (
@@ -318,24 +325,18 @@ def _infer_vernacular(location: str, client) -> str | None:
         return None
 
 
-import concurrent.futures
-
 def build_ai_story(facts: dict, tone: str, length: str, api_key: str) -> str:
     if not api_key or anthropic is None:
         return build_fallback_story(facts, tone, length)
 
     try:
-        # 1. Enforce a strict timeout on the Anthropic client (e.g., 60 seconds per call)
         client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+        vernacular = _infer_vernacular(facts.get("location", ""), client)
 
-        # Infer vernacular from the location string
-        vernacular = _infer_vernacular(facts["location"], client)
-
-        # If no vernacular, just run the English call normally
         if not vernacular:
             return _call_claude(client, _build_prompt(facts, tone, length, "English"), length)
 
-        # 2. Parallelize the English and Vernacular calls to cut wait times in half
+        # Run the English and vernacular calls in parallel to halve wall-clock time.
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             english_future = executor.submit(
                 _call_claude, client, _build_prompt(facts, tone, length, "English"), length
@@ -343,17 +344,14 @@ def build_ai_story(facts: dict, tone: str, length: str, api_key: str) -> str:
             vernacular_future = executor.submit(
                 _call_claude, client, _build_prompt(facts, tone, length, vernacular), length
             )
-
-            # Wait for both to finish and get their results
             english_story = english_future.result()
             vernacular_story = vernacular_future.result()
 
         return english_story + STORY_DELIMITER + vernacular_story
 
-    except anthropic.APITimeoutError:
-        print("CLAUDE TIMEOUT: The Anthropic API took too long to respond.")
-        return build_fallback_story(facts, tone, length)
     except Exception as e:
+        # Covers anthropic.APITimeoutError and everything else - always fall back
+        # rather than letting a 500 reach the frontend.
         print(f"CLAUDE ERROR: {e}")
         return build_fallback_story(facts, tone, length)
 
@@ -438,6 +436,7 @@ def analyze():
         run_id = save_run(facts, story)
         return jsonify({"run_id": run_id, "facts": facts, "story": story})
     except Exception as exc:
+        print(f"ANALYZE ERROR: {exc}")
         return jsonify({"error": str(exc)}), 400
 
 
@@ -456,20 +455,25 @@ def facts_only():
         )
         return jsonify({"facts": facts})
     except Exception as exc:
+        print(f"FACTS ERROR: {exc}")
         return jsonify({"error": str(exc)}), 400
 
 
 @app.route("/api/history")
 def history():
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            """
-            SELECT id, created_at, dataset_label, location, start_year, end_year
-            FROM runs ORDER BY id DESC LIMIT 20
-            """
-        ).fetchall()
-    return jsonify([dict(row) for row in rows])
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, created_at, dataset_label, location, start_year, end_year
+                FROM runs ORDER BY id DESC LIMIT 20
+                """
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
+    except Exception as exc:
+        print(f"HISTORY ERROR: {exc}")
+        return jsonify({"error": str(exc)}), 400
 
 
 init_db()
