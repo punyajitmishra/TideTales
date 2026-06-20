@@ -27,9 +27,14 @@ STORY_DELIMITER = "\n\n---VERNACULAR---\n\n"
 
 # Token budgets, trimmed down from the original 1000/3000.
 # Short stories target ~300-500 words (~700 tokens is plenty of headroom).
-# Long stories target ~1000-1800 words (~2400 tokens is plenty of headroom).
+# Long stories target ~1000-1500 words (~2400 tokens is plenty of headroom).
 MAX_TOKENS = {"Short": 700, "Long": 2400}
 VERNACULAR_INFER_MAX_TOKENS = 20
+
+# Non-Latin / non-alphabetic scripts (CJK, Indic, etc.) need more tokens to
+# express the same word count as English, since tokenization is denser.
+# Bump this toward 2.2 if Japanese/Chinese/etc. long stories still truncate.
+VERNACULAR_TOKEN_MULTIPLIER = 1.8
 
 DATASET_META = {
     "nasa_gistemp": {
@@ -253,10 +258,10 @@ def build_fallback_story(facts: dict, tone: str, length: str) -> str:
     return "\n\n".join(paragraphs)
 
 
-def _call_claude(client, prompt: str, length: str) -> str:
+def _call_claude(client, prompt: str, max_tokens: int) -> str:
     response = client.messages.create(
         model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-        max_tokens=MAX_TOKENS.get(length, MAX_TOKENS["Short"]),
+        max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text.strip()
@@ -296,9 +301,11 @@ FACTS:
 
 def _infer_vernacular(location: str, client) -> str | None:
     """
-    Ask Claude what the dominant non-English regional language is for a location.
-    Returns the language name (e.g. "Odia", "Hindi", "Tamil") or None if English
-    is the primary language or no clear regional language can be identified.
+    Ask Claude what the dominant local language is for a location, even if
+    that's the country's main national language (e.g. Japanese for Tokyo,
+    Mandarin for Beijing) rather than only a regional minority language.
+    Returns the language name, or None if English is the dominant language
+    or no location was given.
     """
     if not location or not location.strip():
         return None
@@ -309,17 +316,22 @@ def _infer_vernacular(location: str, client) -> str | None:
             messages=[{
                 "role": "user",
                 "content": (
-                    f"What is the dominant non-English regional language spoken in '{location}'? "
-                    "Reply with just the language name (e.g. 'Odia', 'Tamil', 'Bengali'). "
-                    "If English is the primary language there, or you cannot identify a clear "
-                    "regional language, reply with exactly: none"
+                    f"What is the dominant everyday spoken language in '{location}'? "
+                    "This includes the country's main national language if that's what "
+                    "most residents speak day to day (e.g. Japanese for Tokyo, Mandarin "
+                    "for Beijing, Tamil for Chennai) — not just minority regional languages. "
+                    "Reply with ONLY the language name in English (e.g. 'Japanese', "
+                    "'Mandarin Chinese', 'Tamil', 'Odia'). "
+                    "If English is the dominant everyday language there (e.g. London, "
+                    "New York, Sydney), or the location is unrecognized/ambiguous, "
+                    "reply with exactly: none"
                 ),
             }],
         )
-        result = response.content[0].text.strip().lower()
-        if result == "none" or not result:
+        result = response.content[0].text.strip()
+        if not result or result.lower() == "none":
             return None
-        return result.capitalize()
+        return result
     except Exception as e:
         print(f"CLAUDE VERNACULAR INFERENCE ERROR: {e}")
         return None
@@ -330,19 +342,27 @@ def build_ai_story(facts: dict, tone: str, length: str, api_key: str) -> str:
         return build_fallback_story(facts, tone, length)
 
     try:
-        client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+        client = anthropic.Anthropic(api_key=api_key, timeout=90.0)
         vernacular = _infer_vernacular(facts.get("location", ""), client)
 
-        if not vernacular:
-            return _call_claude(client, _build_prompt(facts, tone, length, "English"), length)
+        base_tokens = MAX_TOKENS.get(length, MAX_TOKENS["Short"])
+        vernacular_tokens = int(base_tokens * VERNACULAR_TOKEN_MULTIPLIER)
 
-        # Run the English and vernacular calls in parallel to halve wall-clock time.
+        if not vernacular:
+            return _call_claude(
+                client, _build_prompt(facts, tone, length, "English"), base_tokens
+            )
+
+        # Run the English and vernacular calls in parallel, as two fully
+        # separate Claude requests, to halve wall-clock time. Each gets its
+        # own prompt and its own token budget — the vernacular call gets
+        # extra headroom since non-Latin scripts tokenize more densely.
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             english_future = executor.submit(
-                _call_claude, client, _build_prompt(facts, tone, length, "English"), length
+                _call_claude, client, _build_prompt(facts, tone, length, "English"), base_tokens
             )
             vernacular_future = executor.submit(
-                _call_claude, client, _build_prompt(facts, tone, length, vernacular), length
+                _call_claude, client, _build_prompt(facts, tone, length, vernacular), vernacular_tokens
             )
             english_story = english_future.result()
             vernacular_story = vernacular_future.result()
