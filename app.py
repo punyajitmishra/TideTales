@@ -34,7 +34,7 @@ VERNACULAR_INFER_MAX_TOKENS = 20
 # Non-Latin / non-alphabetic scripts (CJK, Indic, etc.) need more tokens to
 # express the same word count as English, since tokenization is denser.
 # Bump this toward 2.2 if Japanese/Chinese/etc. long stories still truncate.
-VERNACULAR_TOKEN_MULTIPLIER = 1.8
+VERNACULAR_TOKEN_MULTIPLIER = 3.2
 
 DATASET_META = {
     "nasa_gistemp": {
@@ -285,6 +285,7 @@ Rules:
 - Mention the dataset source exactly once.
 - Keep it vivid and verifiable.
 - Finish the narrative completely. Never stop mid-sentence or mid-section.
+- If token space is limited, shorten the story. Never end mid-sentence.
 - End with a clear concluding paragraph.
 - Write entirely in {language}.
 - Use natural, native-level prose — do not translate English sentence structures literally.
