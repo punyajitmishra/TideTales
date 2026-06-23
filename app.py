@@ -36,11 +36,6 @@ VERNACULAR_INFER_MAX_TOKENS = 20
 # Bump this toward 2.2 if Japanese/Chinese/etc. long stories still truncate.
 VERNACULAR_TOKEN_MULTIPLIER = 4.5
 
-vernacular_tokens = min(
-    int(base_tokens * VERNACULAR_TOKEN_MULTIPLIER),
-    8000
-)
-
 DATASET_META = {
     "nasa_gistemp": {
         "id": "nasa_gistemp",
