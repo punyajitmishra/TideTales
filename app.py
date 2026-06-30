@@ -34,7 +34,7 @@ VERNACULAR_INFER_MAX_TOKENS = 20
 # Non-Latin / non-alphabetic scripts (CJK, Indic, etc.) need more tokens to
 # express the same word count as English, since tokenization is denser.
 # Bump this toward 2.2 if Japanese/Chinese/etc. long stories still truncate.
-VERNACULAR_TOKEN_MULTIPLIER = 4.5
+VERNACULAR_TOKEN_MULTIPLIER = 7
 
 DATASET_META = {
     "nasa_gistemp": {
